@@ -1,0 +1,384 @@
+import 'fake-indexeddb/auto';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  blank,
+  applyEdits,
+  materialize,
+  mergeFields,
+  load,
+  transact,
+  saveFile,
+  getLocalFile,
+  listRecovery,
+  restoreSnapshot,
+} from '../lib/stride/storage';
+import { taskData, uid } from '../lib/stride/types';
+import { exportBackup, stageBackup, restoreBackup } from '../lib/stride/backup';
+void test('edits and their outbox records commit together and remain account-isolated', async () => {
+  const id = uid();
+  await transact((s) => {
+    applyEdits(
+      s,
+      [{ id, kind: 'task', data: taskData('Persistent') }],
+      'Create',
+    );
+  }, 'alice');
+  const saved = await load('alice');
+  assert.equal(materialize(saved.fields)[0].data.title, 'Persistent');
+  assert.equal(saved.outbox.length, 1);
+  assert.equal(materialize((await load('bob')).fields).length, 0);
+  await assert.rejects(
+    transact((s) => {
+      applyEdits(s, [{ id, kind: 'task', data: { title: '' } }], 'Invalid');
+    }, 'alice'),
+  );
+  assert.equal(
+    materialize((await load('alice')).fields)[0].data.title,
+    'Persistent',
+  );
+});
+void test('disjoint fields merge and same-field alternatives are retained', () => {
+  const original = blank();
+  const id = uid();
+  applyEdits(
+    original,
+    [{ id, kind: 'task', data: taskData('Original') }],
+    'Create',
+  );
+  const left = structuredClone(original),
+    right = structuredClone(original);
+  left.device = 'device-a';
+  right.device = 'device-b';
+  applyEdits(left, [{ id, kind: 'task', data: { title: 'Left' } }], 'Edit');
+  applyEdits(
+    right,
+    [{ id, kind: 'task', data: { description: 'Right description' } }],
+    'Edit',
+  );
+  mergeFields(left, right.outbox.at(-1)!.fields);
+  assert.equal(left.conflicts.length, 0);
+  assert.equal(
+    materialize(left.fields)[0].data.description,
+    'Right description',
+  );
+  applyEdits(right, [{ id, kind: 'task', data: { title: 'Right' } }], 'Edit');
+  mergeFields(left, right.outbox.at(-1)!.fields);
+  assert.equal(left.conflicts.length, 1);
+  assert.equal(left.conflicts[0].local.value, 'Left');
+  assert.equal(left.conflicts[0].remote.value, 'Right');
+  mergeFields(left, right.outbox.at(-1)!.fields);
+  assert.equal(left.conflicts.length, 1);
+});
+void test('large operations never split a new entity across sync chunks', () => {
+  const state = blank();
+  applyEdits(
+    state,
+    Array.from({ length: 90 }, (_, i) => ({
+      id: `task-${i}`,
+      kind: 'task' as const,
+      data: taskData(`Task ${i}`),
+    })),
+    'Bulk',
+  );
+  assert.ok(state.outbox.length > 1);
+  for (const change of state.outbox) {
+    const records = materialize(
+      Object.fromEntries(change.fields.map((f) => [`${f.entity}:${f.key}`, f])),
+    );
+    for (const e of records) {
+      assert.equal(
+        e.data.timezone,
+        Intl.DateTimeFormat().resolvedOptions().timeZone,
+      );
+      assert.equal(e.data.status, 'To do');
+    }
+  }
+});
+void test('complete backups round-trip records and bytes; corruption is rejected', async () => {
+  const owner = 'backup-source';
+  const fileId = uid();
+  const pageId = uid();
+  await saveFile(
+    fileId,
+    new Blob(['original attachment'], { type: 'text/plain' }),
+    owner,
+    'note.txt',
+  );
+  await transact(
+    (s) =>
+      applyEdits(
+        s,
+        [
+          {
+            id: pageId,
+            kind: 'page',
+            data: { title: 'A page', icon: '📄', cover: '', parent: '' },
+          },
+          {
+            id: uid(),
+            kind: 'block',
+            data: {
+              page: pageId,
+              type: 'file',
+              file: fileId,
+              name: 'note.txt',
+              text: 'note',
+              order: 1,
+              checked: false,
+            },
+          },
+        ],
+        'Setup',
+      ),
+    owner,
+  );
+  const exported = await exportBackup(owner);
+  const staged = await stageBackup(exported.code);
+  assert.equal(staged.files.length, 1);
+  await restoreBackup(staged, 'backup-target');
+  assert.equal(materialize((await load('backup-target')).fields).length, 2);
+  assert.equal(
+    await (await getLocalFile(fileId, 'backup-target'))?.blob.text(),
+    'original attachment',
+  );
+  await assert.rejects(stageBackup(exported.code.slice(0, -10) + 'aaaaaaaaaa'));
+  const parsed = JSON.parse(exported.json);
+  parsed.files = [];
+  await assert.rejects(stageBackup(JSON.stringify(parsed)), /missing/);
+  parsed.version = 99;
+  await assert.rejects(stageBackup(JSON.stringify(parsed)), /Unsupported/);
+});
+void test('restore preserves original record and file bytes in recovery', async () => {
+  const owner = 'recover';
+  const id = uid(),
+    fileId = uid();
+  await transact(
+    (s) =>
+      applyEdits(
+        s,
+        [
+          {
+            id,
+            kind: 'page',
+            data: { title: 'Before', icon: '', cover: '', parent: '' },
+          },
+        ],
+        'Before',
+      ),
+    owner,
+  );
+  await saveFile(fileId, new Blob(['before']), owner, 'before.txt');
+  const replacement = blank();
+  applyEdits(
+    replacement,
+    [
+      {
+        id,
+        kind: 'page',
+        data: { title: 'After', icon: '', cover: '', parent: '' },
+      },
+    ],
+    'After',
+  );
+  await restoreSnapshot(
+    replacement,
+    [
+      {
+        id: fileId,
+        owner,
+        blob: new Blob(['after']),
+        hash: '',
+        name: 'after.txt',
+        uploaded: false,
+      },
+    ],
+    owner,
+  );
+  const recovery = (await listRecovery(owner))[0];
+  assert.equal(materialize(recovery.snapshot.fields)[0].data.title, 'Before');
+  assert.equal(await recovery.files[0].blob.text(), 'before');
+  assert.equal(materialize((await load(owner)).fields)[0].data.title, 'After');
+  await restoreSnapshot(recovery.snapshot, recovery.files, owner);
+  assert.equal(
+    await (await getLocalFile(fileId, owner))?.blob.text(),
+    'before',
+  );
+});
+
+void test('restart preserves causal outbox order, acknowledgments, and indexed records', async () => {
+  const { closeStorage, indexedRecords } =
+    await import('../lib/stride/storage');
+  const owner = 'restart';
+  const id = uid();
+  await transact((s) => {
+    applyEdits(
+      s,
+      [
+        {
+          id,
+          kind: 'task',
+          data: taskData('Create', { project: 'project-a' }),
+        },
+      ],
+      'Create',
+    );
+  }, owner);
+  await transact((s) => {
+    applyEdits(s, [{ id, kind: 'task', data: { title: 'Edit' } }], 'Edit');
+  }, owner);
+  const before = await load(owner);
+  const ids = before.outbox.map((c) => c.id);
+  await closeStorage();
+  const reopened = await load(owner);
+  assert.deepEqual(
+    reopened.outbox.map((c) => c.id),
+    ids,
+  );
+  assert.deepEqual(
+    reopened.history.map((c) => c.label),
+    ['Create', 'Edit'],
+  );
+  assert.equal(
+    (await indexedRecords(owner, 'task', 'project-a'))[0].data.title,
+    'Edit',
+  );
+  await transact((s) => {
+    s.outbox = s.outbox.filter((c) => c.id !== ids[0]);
+  }, owner);
+  await closeStorage();
+  assert.deepEqual(
+    (await load(owner)).outbox.map((c) => c.id),
+    [ids[1]],
+  );
+});
+
+void test('concurrent saves serialize and a quota failure commits neither records nor operations', async () => {
+  const owner = 'concurrent';
+  const ids = [uid(), uid(), uid()];
+  await Promise.all(
+    ids.map((id, i) =>
+      transact((s) => {
+        applyEdits(
+          s,
+          [{ id, kind: 'task', data: taskData(`Task ${i}`) }],
+          `Create ${i}`,
+        );
+      }, owner),
+    ),
+  );
+  const before = await load(owner);
+  const { IDBObjectStore } = await import('fake-indexeddb');
+  // Retain the method itself for fault injection; calls below explicitly bind the original receiver.
+  // eslint-disable-next-line typescript/unbound-method
+  const put = IDBObjectStore.prototype.put;
+  IDBObjectStore.prototype.put = function (...args) {
+    if (this.name === 'operations')
+      throw new DOMException('Quota exhausted', 'QuotaExceededError');
+    return put.apply(this, args);
+  };
+  try {
+    await assert.rejects(
+      transact((s) => {
+        applyEdits(
+          s,
+          [{ id: ids[0], kind: 'task', data: { title: 'Must not commit' } }],
+          'Failed',
+        );
+      }, owner),
+    );
+  } finally {
+    IDBObjectStore.prototype.put = put;
+  }
+  const { closeStorage } = await import('../lib/stride/storage');
+  await closeStorage();
+  const saved = await load(owner);
+  assert.equal(materialize(saved.fields).length, 3);
+  assert.deepEqual(saved.history, before.history);
+  assert.equal(
+    materialize(saved.fields).find((e) => e.id === ids[0])?.data.title,
+    'Task 0',
+  );
+});
+
+void test('backup capture is immutable across later record and attachment edits', async () => {
+  const { captureWorkspace } = await import('../lib/stride/storage');
+  const owner = 'capture',
+    id = uid(),
+    fileId = uid();
+  await transact(
+    (s) =>
+      applyEdits(
+        s,
+        [{ id, kind: 'page', data: { title: 'Before' } }],
+        'Before',
+      ),
+    owner,
+  );
+  await saveFile(fileId, new Blob(['before']), owner);
+  const captured = await captureWorkspace(owner);
+  await transact(
+    (s) =>
+      applyEdits(s, [{ id, kind: 'page', data: { title: 'After' } }], 'After'),
+    owner,
+  );
+  await saveFile(fileId, new Blob(['after']), owner);
+  assert.equal(materialize(captured.snapshot.fields)[0].data.title, 'Before');
+  assert.equal(await captured.files[0].blob.text(), 'before');
+});
+
+void test('deletion racing an edit retains the edit and offers an explicit restore conflict', () => {
+  const original = blank();
+  applyEdits(
+    original,
+    [{ id: 'delete-race', kind: 'task', data: taskData('Original') }],
+    'Create',
+  );
+  const edited = structuredClone(original),
+    deleted = structuredClone(original);
+  edited.device = 'device-a';
+  deleted.device = 'device-b';
+  applyEdits(
+    edited,
+    [
+      {
+        id: 'delete-race',
+        kind: 'task',
+        data: { description: 'Do not discard this text' },
+      },
+    ],
+    'Edit',
+  );
+  applyEdits(
+    deleted,
+    [{ id: 'delete-race', kind: 'task', data: { _deleted: true } }],
+    'Delete',
+  );
+  const editFields = edited.outbox.at(-1)!.fields;
+  const deleteFields = deleted.outbox.at(-1)!.fields;
+  mergeFields(deleted, editFields);
+  mergeFields(edited, deleteFields);
+  assert.equal(deleted.conflicts.length, 1);
+  assert.equal(edited.conflicts.length, 1);
+  assert.equal(deleted.conflicts[0].key, '_deleted');
+  assert.equal(deleted.conflicts[0].remote.value, false);
+  assert.equal(
+    materialize(deleted.fields, true)[0].data.description,
+    'Do not discard this text',
+  );
+  mergeFields(deleted, editFields);
+  assert.equal(deleted.conflicts.length, 1);
+});
+
+void test('multiple edits to one field in a transaction save the final requested value', () => {
+  const state = blank();
+  applyEdits(
+    state,
+    [
+      { id: 'multi', kind: 'task', data: taskData('First') },
+      { id: 'multi', kind: 'task', data: { title: 'Last' } },
+    ],
+    'Combined',
+  );
+  assert.equal(materialize(state.fields)[0].data.title, 'Last');
+});

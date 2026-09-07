@@ -1,0 +1,8 @@
+# Optional server account configuration. Guest mode works without it.
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+# Optional background Web Push configuration.
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=
+REMINDER_DISPATCH_SECRET=
