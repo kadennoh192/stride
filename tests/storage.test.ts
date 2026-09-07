@@ -14,7 +14,13 @@ import {
   restoreSnapshot,
 } from '../lib/stride/storage';
 import { taskData, uid } from '../lib/stride/types';
-import { exportBackup, stageBackup, restoreBackup } from '../lib/stride/backup';
+import {
+  exportBackup,
+  exportBackupArchive,
+  stageBackup,
+  stageBackupFile,
+  restoreBackup,
+} from '../lib/stride/backup';
 void test('edits and their outbox records commit together and remain account-isolated', async () => {
   const id = uid();
   await transact((s) => {
@@ -148,6 +154,25 @@ void test('complete backups round-trip records and bytes; corruption is rejected
   await assert.rejects(stageBackup(JSON.stringify(parsed)), /missing/);
   parsed.version = 99;
   await assert.rejects(stageBackup(JSON.stringify(parsed)), /Unsupported/);
+  const archive = await exportBackupArchive(owner);
+  const archived = await stageBackupFile(archive.blob);
+  assert.equal(archived.records, 2);
+  assert.equal(await archived.files[0].blob.text(), 'original attachment');
+  assert.ok(archive.code.startsWith('STRIDE2.'));
+  assert.equal(
+    (await stageBackupFile(new Blob([exported.json]))).records,
+    2,
+  );
+  const corrupted = new Uint8Array(await archive.blob.arrayBuffer());
+  corrupted[80] ^= 1;
+  await assert.rejects(
+    stageBackupFile(new Blob([corrupted])),
+    /header checksum/,
+  );
+  await assert.rejects(
+    stageBackupFile(archive.blob.slice(0, -1)),
+    /metadata|incomplete/,
+  );
 });
 void test('restore preserves original record and file bytes in recovery', async () => {
   const owner = 'recover';

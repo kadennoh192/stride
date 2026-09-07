@@ -13,7 +13,6 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useStride } from '@/lib/stride/store';
-import {} from '@/lib/stride/types';
 import {
   transact,
   applyEdits,
@@ -23,8 +22,9 @@ import {
   restoreSnapshot,
 } from '@/lib/stride/storage';
 import {
-  exportBackup,
+  exportBackupArchive,
   stageBackup,
+  stageBackupFile,
   restoreBackup,
   type StagedBackup,
   decodeBytes,
@@ -706,8 +706,10 @@ export default function Settings() {
               <p className="muted">
                 Export your tasks, pages, databases, settings, history,
                 templates and attachments. Restoring replaces this workspace and
-                queues the restored records for sync. Credentials and
-                notification subscriptions are excluded.
+                queues the restored records for sync. The .stride file keeps
+                large attachments out of memory; compact codes are also offered
+                when the workspace is small enough. Credentials and notification
+                subscriptions are excluded.
               </p>
               <div className="form-actions">
                 <button
@@ -715,16 +717,16 @@ export default function Settings() {
                   disabled={busy}
                   onClick={() =>
                     void action(async () => {
-                      const backup = await exportBackup(store.owner);
+                      const backup = await exportBackupArchive(store.owner);
                       setBackupCode(backup.code);
                       downloadBlob(
-                        new Blob([backup.json], { type: 'application/json' }),
-                        `stride-backup-${new Date().toISOString().slice(0, 10)}.json`,
+                        backup.blob,
+                        `stride-backup-${new Date().toISOString().slice(0, 10)}.stride`,
                       );
                       setMessage(
                         backup.code
-                          ? 'Complete JSON backup downloaded. Your compact export code is ready below.'
-                          : 'JSON backup downloaded. This browser does not support compressed codes.',
+                          ? 'Complete Stride backup downloaded. Your compact export code is ready below.'
+                          : 'Complete Stride backup downloaded. This workspace is too large for a safe in-memory export code.',
                       );
                     })
                   }
@@ -791,10 +793,12 @@ export default function Settings() {
                     void action(async () => {
                       const f = e.target.files?.[0];
                       if (!f) return;
-                      if (f.size > 150000000)
-                        throw new Error('Backup file is too large');
-                      setRestoreCode(await f.text());
-                      setStaged(null);
+                      setStaged(await stageBackupFile(f));
+                      setConfirmedRestore(false);
+                      setRestoreCode('');
+                      setMessage(
+                        'Backup validated. Review its contents before restoring.',
+                      );
                     })
                   }
                 />
