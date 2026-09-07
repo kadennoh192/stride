@@ -307,6 +307,55 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       ).first('n'),
       1,
     );
+    const retryDue = Date.now() - 1000;
+    await DB.batch([
+      DB.prepare(
+        'INSERT INTO fields (owner,entity,kind,key,value,stamp) VALUES (?,?,?,?,?,?)',
+      ).bind(
+        'alice',
+        'settings',
+        'settings',
+        'quietStart',
+        JSON.stringify('00:00'),
+        '009999999999997-test',
+      ),
+      DB.prepare(
+        'INSERT INTO fields (owner,entity,kind,key,value,stamp) VALUES (?,?,?,?,?,?)',
+      ).bind(
+        'alice',
+        'settings',
+        'settings',
+        'quietEnd',
+        JSON.stringify('00:00'),
+        '009999999999998-test',
+      ),
+      DB.prepare(
+        'INSERT INTO push_subscriptions (owner,endpoint,payload,created) VALUES (?,?,?,?)',
+      ).bind(
+        'alice',
+        'https://fcm.googleapis.com/broken-payload',
+        '{',
+        Date.now(),
+      ),
+      DB.prepare(
+        "INSERT INTO reminder_jobs (id,owner,entity,due,original_due,attempts,state,lease) VALUES (?,?,?,?,?,11,'pending',0)",
+      ).bind('retry-exhausted', 'alice', 'test-task', retryDue, retryDue),
+    ]);
+    const retryDispatch = await api.dispatch.POST(
+      await dispatchRequest(String(Date.now()), crypto.randomUUID()),
+    );
+    assert.equal(retryDispatch.status, 200);
+    assert.deepEqual(await retryDispatch.json(), {
+      claimed: 1,
+      sent: 0,
+      failed: 1,
+    });
+    assert.equal(
+      await DB.prepare(
+        "SELECT COUNT(*) AS n FROM reminder_jobs WHERE id='retry-exhausted' AND state='failed' AND attempts=12 AND lease=0",
+      ).first('n'),
+      1,
+    );
     const malformed = structuredClone(input);
     malformed.changes[0].id = 'invalid-record';
     malformed.changes[0].fields.find((f) => f.key === 'title')!.value = '';
