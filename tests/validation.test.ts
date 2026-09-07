@@ -6,7 +6,7 @@ import {
   validConflict,
   validField,
 } from '../lib/stride/validation';
-import { taskData } from '../lib/stride/types';
+import { defaults, taskData } from '../lib/stride/types';
 void test('runtime validation rejects malformed task, editor, schema, settings, and conflict data', () => {
   for (const data of [
     { dependencies: [{}] },
@@ -28,6 +28,37 @@ void test('runtime validation rejects malformed task, editor, schema, settings, 
       kind: 'block',
       data: { page: 'page', type: 'script', order: 0 },
     }),
+  );
+  for (const data of [
+    { theme: 'solarized' },
+    { accent: 'url(https://tracker.example/pixel)' },
+    { density: 'microscopic' },
+    { font: 'remote-font' },
+    { motion: 'yes' },
+    { rightPanel: 1 },
+    { hidden: ['today', 'unknown'] },
+    { navOrder: ['today', 'today'] },
+    { dailyGoal: 0 },
+    { model: '../invalid' },
+    { taskPaneWidth: 10000 },
+    {
+      activeTimer: {
+        id: 'timer',
+        phase: 'focus',
+        duration: 60,
+        remaining: 61,
+        end: 0,
+        running: true,
+        cycle: 0,
+        task: '../invalid',
+      },
+    },
+  ])
+    assert.throws(() =>
+      validateEntity({ id: 'settings', kind: 'settings', data }),
+    );
+  assert.doesNotThrow(() =>
+    validateEntity({ id: 'settings', kind: 'settings', data: defaults }),
   );
   assert.throws(() =>
     validateEntity({
