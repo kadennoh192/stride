@@ -1,4 +1,4 @@
-import { stringValue } from './types';
+import { databaseLayouts, stringValue } from './types';
 import type {
   Change,
   Field,
@@ -434,17 +434,28 @@ function validateShape(e: EntityCandidate) {
       break;
     case 'view':
       optional(d, 'database', (v) => typeof v === 'string' && id.test(v));
-      for (const key of [
-        'layout',
-        'query',
-        'filterProp',
-        'filterValue',
+      optional(d, 'layout', (v) =>
+        databaseLayouts.includes(v as (typeof databaseLayouts)[number]),
+      );
+      for (const key of ['query', 'filterValue'])
+        optional(d, key, (v) => typeof v === 'string' && v.length <= 10000);
+      for (const key of ['filterProp', 'group'])
+        optional(d, key, (v) => typeof v === 'string' && (!v || id.test(v)));
+      optional(
+        d,
         'sort',
-        'group',
-      ])
-        optional(d, key, (v) => typeof v === 'string');
+        (v) => typeof v === 'string' && (v === 'title' || id.test(v)),
+      );
       optional(d, 'descending', (v) => typeof v === 'boolean');
-      optional(d, 'hidden', strings);
+      for (const key of ['hidden', 'propertyOrder'])
+        optional(
+          d,
+          key,
+          (v) =>
+            strings(v) &&
+            new Set(v).size === v.length &&
+            v.every((property) => id.test(property)),
+        );
       optional(d, 'filter', object);
       break;
     case 'template':

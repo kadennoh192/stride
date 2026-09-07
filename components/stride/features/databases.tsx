@@ -1,11 +1,12 @@
 'use client';
-import { stringValue } from '@/lib/stride/types';
+import { databaseLayouts, stringValue } from '@/lib/stride/types';
 
 import { useState, useMemo } from 'react';
 import { Plus, Grid2X2, Settings, Trash2, ArrowLeft, Copy } from 'lucide-react';
 import { useStride } from '@/lib/stride/store';
 import {
   type Database,
+  type DatabaseLayout,
   type DatabaseRow,
   type Property,
   type PropertyType,
@@ -16,6 +17,10 @@ import {
   taskData,
 } from '@/lib/stride/types';
 import { propertyValue } from '@/lib/stride/domain';
+import {
+  normalizeDatabaseView,
+  orderDatabaseProperties,
+} from '@/lib/stride/database-view';
 import { formula } from '@/lib/stride/formula';
 import { saveFile } from '@/lib/stride/storage';
 import { fileURL, downloadBlob } from '@/lib/stride/files';
@@ -571,7 +576,7 @@ export function DatabaseSurface({
   const [editing, setEditing] = useState<DatabaseRow | null>(null);
   const [schema, setSchema] = useState(false);
   const [viewId, setViewId] = useState('');
-  const [layout, setLayout] = useState('table');
+  const [layout, setLayout] = useState<DatabaseLayout>('table');
   const [query, setQuery] = useState('');
   const [filterProp, setFilterProp] = useState('');
   const [filterValue, setFilterValue] = useState('');
@@ -579,6 +584,7 @@ export function DatabaseSurface({
   const [descending, setDescending] = useState(false);
   const [group, setGroup] = useState('');
   const [hidden, setHidden] = useState<string[]>([]);
+  const [propertyOrder, setPropertyOrder] = useState<string[]>([]);
   const [limit, setLimit] = useState(100);
   const [viewName, setViewName] = useState('');
   const [viewSettings, setViewSettings] = useState(false);
@@ -586,7 +592,10 @@ export function DatabaseSurface({
     (e) => e.kind === 'view' && e.data.database === databaseId,
   );
   const properties = database?.data.properties || EMPTY_PROPERTIES;
-  const visibleProps = properties.filter((p) => !hidden.includes(p.id));
+  const orderedProperties = orderDatabaseProperties(properties, propertyOrder);
+  const visibleProps = orderedProperties.filter(
+    (property) => !hidden.includes(property.id),
+  );
   // Domain records are immutable snapshots; memoization also bounds repeated formula evaluation.
   // eslint-disable-next-line react/react-compiler
   const rows = useMemo(
@@ -656,20 +665,28 @@ export function DatabaseSurface({
     descending,
     group,
     hidden,
+    propertyOrder: orderedProperties.map((property) => property.id),
   });
   const selectView = (id: string) => {
     setViewId(id);
     const view = views.find((v) => v.id === id);
     if (view) {
-      setLayout(stringValue(view.data.layout || 'table'));
-      setQuery(stringValue(view.data.query || ''));
-      setFilterProp(stringValue(view.data.filterProp || ''));
-      setFilterValue(stringValue(view.data.filterValue || ''));
-      setSort(stringValue(view.data.sort || 'title'));
-      setDescending(!!view.data.descending);
-      setGroup(stringValue(view.data.group || ''));
-      setHidden((view.data.hidden as string[]) || []);
+      const saved = normalizeDatabaseView(view.data, properties);
+      setLayout(saved.layout);
+      setQuery(saved.query);
+      setFilterProp(saved.filterProp);
+      setFilterValue(saved.filterValue);
+      setSort(saved.sort);
+      setDescending(saved.descending);
+      setGroup(saved.group);
+      setHidden(saved.hidden);
+      setPropertyOrder(saved.propertyOrder);
     }
+  };
+  const moveProperty = (index: number, offset: -1 | 1) => {
+    const next = orderedProperties.map((property) => property.id);
+    [next[index], next[index + offset]] = [next[index + offset], next[index]];
+    setPropertyOrder(next);
   };
   const createRow = async () => {
     const id = await store.add('row', {
@@ -765,17 +782,15 @@ export function DatabaseSurface({
         </>
       )}
       <div className="viewbar">
-        {['table', 'board', 'list', 'gallery', 'calendar', 'timeline'].map(
-          (v) => (
-            <button
-              key={v}
-              className={`view-tab ${layout === v ? 'active' : ''}`}
-              onClick={() => setLayout(v)}
-            >
-              {v[0].toUpperCase() + v.slice(1)}
-            </button>
-          ),
-        )}
+        {databaseLayouts.map((v) => (
+          <button
+            key={v}
+            className={`view-tab ${layout === v ? 'active' : ''}`}
+            onClick={() => setLayout(v)}
+          >
+            {v[0].toUpperCase() + v.slice(1)}
+          </button>
+        ))}
       </div>
       <div className="filterbar">
         <input
@@ -875,21 +890,31 @@ export function DatabaseSurface({
             </Field>
           </div>
           <div className="property-visibility">
-            {properties.map((p) => (
-              <label className="checkline" key={p.id}>
-                <input
-                  type="checkbox"
-                  checked={!hidden.includes(p.id)}
-                  onChange={(e) =>
-                    setHidden(
-                      e.target.checked
-                        ? hidden.filter((id) => id !== p.id)
-                        : [...hidden, p.id],
-                    )
+            {orderedProperties.map((p, index) => (
+              <div className="checkline" key={p.id}>
+                <label className="checkline">
+                  <input
+                    type="checkbox"
+                    checked={!hidden.includes(p.id)}
+                    onChange={(e) =>
+                      setHidden(
+                        e.target.checked
+                          ? hidden.filter((id) => id !== p.id)
+                          : [...hidden, p.id],
+                      )
+                    }
+                  />
+                  {p.name}
+                </label>
+                <ReorderButtons
+                  up={index ? () => moveProperty(index, -1) : undefined}
+                  down={
+                    index < orderedProperties.length - 1
+                      ? () => moveProperty(index, 1)
+                      : undefined
                   }
                 />
-                {p.name}
-              </label>
+              </div>
             ))}
           </div>
           <div className="form-actions">
