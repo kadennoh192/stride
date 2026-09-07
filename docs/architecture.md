@@ -25,6 +25,8 @@ Saved database views persist layout, query, filter, sort, grouping, visibility, 
 
 Database rendering, filtering, sorting, grouping, and entry details share one computed-value evaluator. It resolves formula dependencies by property name or ID, follows rollups into the related database's schema, and can aggregate a related formula result. Evaluation tracks row-and-property pairs so direct or cross-property cycles terminate as visible `#ERROR` values. The expression engine does not use JavaScript evaluation or expose external I/O.
 
+Custom page and row templates are normalized into complete creation payloads before persistence. Page activation generates fresh page/block identities, canonical order, and ownership for the entire block set, then validates every record before the atomic edit. Row activation discards stale deletion state, retargets the chosen database, and relies on the same schema-aware transaction validation as direct entry creation. Partial legacy templates receive safe defaults; malformed or unsafe embedded content aborts before any workspace mutation.
+
 Version-one data migrates to unclaimed guest storage. Version-two snapshots migrate to indexed owner stores. Version-three record indexes are backfilled in place for keyset paging. The old stores remain intact and a recovery snapshot is retained. Legacy attachment bytes remain available. A blocked migration asks the user to close older tabs rather than deleting data.
 
 The current UI still loads a complete owner snapshot, including database rows and history. Storage exposes tombstone-safe keyset pagination that seeks from a stable record ID without walking earlier rows. Moving the database UI and initial workspace load fully onto paged queries remains release work.
