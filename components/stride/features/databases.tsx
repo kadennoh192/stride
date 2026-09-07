@@ -16,12 +16,14 @@ import {
   uid,
   taskData,
 } from '@/lib/stride/types';
-import { propertyValue } from '@/lib/stride/domain';
 import {
   normalizeDatabaseView,
   orderDatabaseProperties,
 } from '@/lib/stride/database-view';
-import { formula } from '@/lib/stride/formula';
+import {
+  databasePropertyValue,
+  databaseRowValues,
+} from '@/lib/stride/database-values';
 import { saveFile } from '@/lib/stride/storage';
 import { fileURL, downloadBlob } from '@/lib/stride/files';
 import { Field, Select, ReorderButtons } from '../forms';
@@ -45,50 +47,6 @@ const propertyTypes: PropertyType[] = [
   'rollup',
   'formula',
 ];
-function rowValues(row: DatabaseRow) {
-  const values = { ...row.data.values };
-  for (const [k, v] of Object.entries(row.data))
-    if (k.startsWith('cell_')) values[k.slice(5)] = v;
-  return values;
-}
-function valueOf(
-  row: DatabaseRow,
-  p: Property,
-  properties: Property[],
-  entities: Entity[],
-  path = new Set<string>(),
-): unknown {
-  if (path.has(p.id)) return '#ERROR: circular formula';
-  const values = rowValues(row);
-  if (p.type === 'formula') {
-    try {
-      return formula(p.expression || '', (name) => {
-        const property = properties.find(
-          (x) => x.name === name || x.id === name,
-        );
-        if (!property) throw new Error(`Unknown property: ${name}`);
-        return valueOf(
-          row,
-          property,
-          properties,
-          entities,
-          new Set(path).add(p.id),
-        );
-      });
-    } catch (e) {
-      return `#ERROR: ${e instanceof Error ? e.message : 'Invalid formula'}`;
-    }
-  }
-  return propertyValue(
-    { ...row, data: { ...row.data, values } },
-    p,
-    entities.map((e) =>
-      e.kind === 'row'
-        ? { ...e, data: { ...e.data, values: rowValues(e as DatabaseRow) } }
-        : e,
-    ),
-  );
-}
 function display(value: unknown, entities: Entity[]) {
   if (Array.isArray(value))
     return value
@@ -258,7 +216,7 @@ function RowEditor({
   const store = useStride();
   const current =
     (store.entities.find((e) => e.id === row.id) as DatabaseRow) || row;
-  const values = rowValues(current);
+  const values = databaseRowValues(current);
   return (
     <Modal title="Database entry" open onClose={onClose} wide>
       <Field label="Title">
@@ -275,7 +233,12 @@ function RowEditor({
             {['formula', 'rollup'].includes(p.type) ? (
               <output>
                 {display(
-                  valueOf(current, p, database.data.properties, store.entities),
+                  databasePropertyValue(
+                    current,
+                    p,
+                    database.data.properties,
+                    store.entities,
+                  ),
                   store.entities,
                 )}
               </output>
@@ -615,7 +578,7 @@ export function DatabaseSurface({
             const p = properties.find((p) => p.id === filterProp);
             return p
               ? display(
-                  valueOf(r, p, properties, store.entities),
+                  databasePropertyValue(r, p, properties, store.entities),
                   store.entities,
                 )
                   .toLowerCase()
@@ -627,9 +590,11 @@ export function DatabaseSurface({
         .sort((a, b) => {
           const p = properties.find((p) => p.id === sort);
           const av = p
-              ? valueOf(a, p, properties, store.entities)
+              ? databasePropertyValue(a, p, properties, store.entities)
               : a.data.title,
-            bv = p ? valueOf(b, p, properties, store.entities) : b.data.title;
+            bv = p
+              ? databasePropertyValue(b, p, properties, store.entities)
+              : b.data.title;
           const compare =
             typeof av === 'number' && typeof bv === 'number'
               ? av - bv
@@ -706,7 +671,7 @@ export function DatabaseSurface({
           rows.map(
             (r) =>
               display(
-                valueOf(
+                databasePropertyValue(
                   r,
                   properties.find((p) => p.id === group)!,
                   properties,
@@ -719,7 +684,7 @@ export function DatabaseSurface({
       ]
     : ['All entries'];
   const cell = (r: DatabaseRow, p: Property) => {
-    const value = valueOf(r, p, properties, store.entities);
+    const value = databasePropertyValue(r, p, properties, store.entities);
     if (['url', 'email', 'phone'].includes(p.type)) {
       return display(value, store.entities);
     }
@@ -970,7 +935,7 @@ export function DatabaseSurface({
                 kind: 'task',
                 data: taskData(r.data.title, {
                   due: stringValue(
-                    rowValues(r)[database.data.dateProperty] || '',
+                    databaseRowValues(r)[database.data.dateProperty] || '',
                   ),
                 }),
               })) as Task[]
@@ -1013,7 +978,7 @@ export function DatabaseSurface({
                   (r) =>
                     !group ||
                     (display(
-                      valueOf(
+                      databasePropertyValue(
                         r,
                         properties.find((p) => p.id === group)!,
                         properties,
@@ -1047,7 +1012,7 @@ export function DatabaseSurface({
                         (r) =>
                           !group ||
                           (display(
-                            valueOf(
+                            databasePropertyValue(
                               r,
                               properties.find((p) => p.id === group)!,
                               properties,
@@ -1073,7 +1038,7 @@ export function DatabaseSurface({
                                 <input
                                   type="checkbox"
                                   aria-label={`${r.data.title} ${p.name}`}
-                                  checked={rowValues(r)[p.id] === true}
+                                  checked={databaseRowValues(r)[p.id] === true}
                                   onChange={(e) =>
                                     void store.update(r, {
                                       [`cell_${p.id}`]: e.target.checked,
@@ -1101,7 +1066,7 @@ export function DatabaseSurface({
                   (r) =>
                     !group ||
                     (display(
-                      valueOf(
+                      databasePropertyValue(
                         r,
                         properties.find((p) => p.id === group)!,
                         properties,
