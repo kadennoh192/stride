@@ -27,30 +27,55 @@ export function nextOccurrence(task: Task, completed = new Date()): string {
   if (!rule || rule === 'none') return '';
   const [frequency, amountString] = rule.split(':');
   const amount = Math.max(1, Math.min(365, Number(amountString) || 1));
-  const base = frequency.startsWith('after')
-    ? dateKey(completed, task.data.timezone)
-    : task.data.due || dateKey(completed, task.data.timezone);
-  if (frequency === 'daily' || frequency === 'after-days')
-    return shiftDate(base, amount);
-  if (frequency === 'weekly') return shiftDate(base, 7 * amount);
+  const completedDay = dateKey(completed, task.data.timezone);
+  if (frequency === 'after-days') return shiftDate(completedDay, amount);
+  const base = task.data.due || completedDay;
+  if (frequency === 'daily' || frequency === 'weekly') {
+    const interval = amount * (frequency === 'weekly' ? 7 : 1);
+    if (base > completedDay) return shiftDate(base, interval);
+    const elapsed = Math.floor(
+      (Date.parse(`${completedDay}T12:00Z`) - Date.parse(`${base}T12:00Z`)) /
+        86400000,
+    );
+    return shiftDate(base, (Math.floor(elapsed / interval) + 1) * interval);
+  }
   if (frequency === 'weekdays') {
-    let next = shiftDate(base, 1);
+    let next = shiftDate(base > completedDay ? base : completedDay, 1);
     while ([0, 6].includes(new Date(next + 'T12:00Z').getUTCDay()))
       next = shiftDate(next, 1);
     return next;
   }
-  const d = new Date(base + 'T12:00Z');
   const day = task.data.recurrenceAnchor
     ? new Date(stringValue(task.data.recurrenceAnchor) + 'T12:00Z').getUTCDate()
-    : d.getUTCDate();
+    : new Date(base + 'T12:00Z').getUTCDate();
   if (frequency === 'monthly' || frequency === 'yearly') {
-    d.setUTCDate(1);
-    d.setUTCMonth(d.getUTCMonth() + (frequency === 'yearly' ? 12 : 1) * amount);
-    const last = new Date(
-      Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0),
-    ).getUTCDate();
-    d.setUTCDate(Math.min(day, last));
-    return d.toISOString().slice(0, 10);
+    const interval = (frequency === 'yearly' ? 12 : 1) * amount;
+    const start = new Date(base + 'T12:00Z');
+    const end = new Date(completedDay + 'T12:00Z');
+    const months =
+      (end.getUTCFullYear() - start.getUTCFullYear()) * 12 +
+      end.getUTCMonth() -
+      start.getUTCMonth();
+    let steps =
+      base > completedDay ? 1 : Math.max(1, Math.ceil(months / interval));
+    const candidate = (count: number) => {
+      const date = new Date(
+        Date.UTC(
+          start.getUTCFullYear(),
+          start.getUTCMonth() + count * interval,
+          1,
+          12,
+        ),
+      );
+      const last = new Date(
+        Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0),
+      ).getUTCDate();
+      date.setUTCDate(Math.min(day, last));
+      return date.toISOString().slice(0, 10);
+    };
+    let next = candidate(steps);
+    if (next <= completedDay) next = candidate(++steps);
+    return next;
   }
   return '';
 }
