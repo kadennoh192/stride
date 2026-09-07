@@ -147,6 +147,24 @@ export default function Settings() {
   };
   const accountAction = async (actionName: string) =>
     action(async () => {
+      let subscription: PushSubscription | null = null;
+      let reminderRemovalWarning = false;
+      if (actionName === 'logout') {
+        const registration = await navigator.serviceWorker?.getRegistration();
+        subscription =
+          (await registration?.pushManager?.getSubscription()) || null;
+        if (subscription) {
+          const removal = await fetch('/api/push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'remove',
+              subscription: subscription.toJSON(),
+            }),
+          });
+          reminderRemovalWarning = !removal.ok;
+        }
+      }
       const response = await fetch('/api/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -157,20 +175,18 @@ export default function Settings() {
         verifyEmail?: boolean;
       };
       if (!response.ok) throw new Error(data.error || 'Account request failed');
-      if (actionName === 'logout') {
-        const registration = await navigator.serviceWorker?.getRegistration();
-        const subscription = await registration?.pushManager?.getSubscription();
-        await subscription?.unsubscribe();
-      }
+      if (actionName === 'logout') await subscription?.unsubscribe();
       setPassword('');
       setMessage(
-        data.verifyEmail
-          ? 'Check your email to verify your account.'
-          : actionName === 'recover'
-            ? 'If that account exists, a recovery email has been sent.'
-            : actionName === 'password'
-              ? 'Password updated.'
-              : 'Account updated.',
+        actionName === 'logout' && reminderRemovalWarning
+          ? 'Signed out and disabled this browser’s push endpoint. Server cleanup could not be confirmed and will be retried when that endpoint rejects delivery.'
+          : data.verifyEmail
+            ? 'Check your email to verify your account.'
+            : actionName === 'recover'
+              ? 'If that account exists, a recovery email has been sent.'
+              : actionName === 'password'
+                ? 'Password updated.'
+                : 'Account updated.',
       );
       await store.refreshAccount();
     });

@@ -71,7 +71,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
     await build({
       stdin: {
         contents:
-          "export * as upload from './app/api/files/[id]/upload/route'; export * as sync from './app/api/sync/route'; export * as auth from './app/api/auth/route'; export * as files from './app/api/files/[id]/route'; export * as dispatch from './app/api/reminders/route';",
+          "export * as upload from './app/api/files/[id]/upload/route'; export * as sync from './app/api/sync/route'; export * as auth from './app/api/auth/route'; export * as files from './app/api/files/[id]/route'; export * as push from './app/api/push/route'; export * as dispatch from './app/api/reminders/route';",
         resolveDir: process.cwd(),
       },
       outfile: output,
@@ -207,6 +207,50 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       ).status,
       200,
     );
+    const subscription = {
+      endpoint: 'https://fcm.googleapis.com/stride-test-endpoint',
+      keys: { p256dh: 'a'.repeat(80), auth: 'b'.repeat(20) },
+    };
+    const pushRequest = (
+      action: string,
+      cookie = 'stride_access=valid-alice',
+    ) =>
+      new Request('https://stride.test/api/push', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://stride.test',
+          Cookie: cookie,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ action, subscription }),
+      });
+    assert.equal((await api.push.POST(pushRequest('subscribe'))).status, 200);
+    assert.equal(
+      await DB.prepare(
+        "SELECT COUNT(*) AS n FROM push_subscriptions WHERE owner='alice'",
+      ).first('n'),
+      1,
+    );
+    await DB.prepare(
+      'INSERT INTO push_subscriptions (owner,endpoint,payload,created) VALUES (?,?,?,?)',
+    )
+      .bind(
+        'bob',
+        subscription.endpoint,
+        JSON.stringify(subscription),
+        Date.now(),
+      )
+      .run();
+    assert.equal((await api.push.POST(pushRequest('remove'))).status, 200);
+    assert.equal(
+      await DB.prepare(
+        'SELECT COUNT(*) AS n FROM push_subscriptions WHERE endpoint=?',
+      )
+        .bind(subscription.endpoint)
+        .first('n'),
+      1,
+    );
+    assert.equal((await api.push.POST(pushRequest('remove', ''))).status, 401);
     const dispatchTime = String(Date.now());
     const dispatchNonce = crypto.randomUUID();
     const dispatch = await api.dispatch.POST(
