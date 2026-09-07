@@ -84,7 +84,7 @@ void test('complete archive restores every record kind and attachment-bearing st
         title: 'Launch',
         color: '#5268e8',
         sections: ['Planning', 'Delivery'],
-        background: 'gradient',
+        background: '#f6f7fa',
       },
     },
     {

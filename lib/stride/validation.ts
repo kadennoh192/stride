@@ -29,6 +29,8 @@ export const kinds: Kind[] = [
 const id = /^[a-zA-Z0-9_-]{1,150}$/;
 const stamp = /^\d{15}-[a-zA-Z0-9-]{1,100}$/;
 const time = /^([01]\d|2[0-3]):[0-5]\d$/;
+const hexColor = (value: unknown) =>
+  typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value);
 export class ValidationError extends Error {}
 const invalid = (message: string): never => {
   throw new ValidationError(message);
@@ -258,11 +260,13 @@ function validateShape(e: EntityCandidate) {
   switch (e.kind) {
     case 'project':
       optional(d, 'sections', strings);
-      for (const key of ['color', 'background'])
-        optional(d, key, (v) => typeof v === 'string');
+      optional(d, 'color', hexColor);
+      optional(d, 'background', (v) => v === '' || hexColor(v));
       break;
     case 'page':
       optional(d, 'parent', (v) => typeof v === 'string' && (!v || id.test(v)));
+      optional(d, 'icon', (v) => typeof v === 'string' && v.length <= 16);
+      optional(d, 'cover', (v) => v === '' || hexColor(v));
       break;
     case 'block':
       if (
@@ -345,6 +349,13 @@ function validateShape(e: EntityCandidate) {
         d,
         'reminder',
         (v) => v === '' || (typeof v === 'string' && time.test(v)),
+      );
+      optional(d, 'color', hexColor);
+      optional(d, 'icon', (v) => typeof v === 'string' && v.length <= 16);
+      optional(
+        d,
+        'unit',
+        (v) => typeof v === 'string' && v.trim().length > 0 && v.length <= 100,
       );
       break;
     case 'habitLog':
@@ -436,11 +447,7 @@ function validateShape(e: EntityCandidate) {
         'sidebarColor',
         'accentSurfaceColor',
       ])
-        optional(
-          d,
-          key,
-          (v) => typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v),
-        );
+        optional(d, key, hexColor);
       optional(d, 'density', (v) =>
         ['compact', 'comfortable', 'spacious'].includes(String(v)),
       );

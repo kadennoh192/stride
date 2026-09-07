@@ -29,6 +29,30 @@ void test('runtime validation rejects malformed task, editor, schema, settings, 
       data: { page: 'page', type: 'script', order: 0 },
     }),
   );
+  for (const entity of [
+    {
+      id: 'project',
+      kind: 'project' as const,
+      data: { title: 'Project', color: 'url(https://tracker.example/pixel)' },
+    },
+    {
+      id: 'page',
+      kind: 'page' as const,
+      data: { title: 'Page', cover: 'linear-gradient(red, blue)' },
+    },
+    {
+      id: 'habit',
+      kind: 'habit' as const,
+      data: {
+        title: 'Habit',
+        goal: 1,
+        days: [1],
+        color: 'currentColor',
+        unit: 'times',
+      },
+    },
+  ])
+    assert.throws(() => validateEntity(entity));
   for (const data of [
     { theme: 'solarized' },
     { accent: 'url(https://tracker.example/pixel)' },
