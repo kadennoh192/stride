@@ -652,6 +652,15 @@ export function mergeFields(state: Snapshot, fields: Field[], detect = true) {
     if (
       detect &&
       !(f.key === '_deleted' && deletionConflicts.has(f.entity)) &&
+      f.kind !== 'completion' &&
+      !(
+        f.kind === 'task' &&
+        f.key === 'completedAt' &&
+        typeof f.value === 'string' &&
+        f.value !== '' &&
+        typeof current?.value === 'string' &&
+        current.value !== ''
+      ) &&
       current &&
       f.stamp !== current.stamp &&
       f.base !== undefined &&

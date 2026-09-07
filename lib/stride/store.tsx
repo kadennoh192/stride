@@ -37,7 +37,7 @@ import {
   allFiles,
 } from './storage';
 import { uploadFile } from './upload';
-import { nextOccurrence } from './domain';
+import { completionEdits } from './completion';
 interface Account {
   configured: boolean;
   user: { id: string; email: string } | null;
@@ -518,27 +518,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     settings.taskPaneWidth,
   ]);
   const complete = async (task: Task) => {
-    const next = nextOccurrence(task);
-    const occurrence = stringValue(
-      task.data.occurrence || task.data.due || 'once',
-    );
-    const id = `completion-${task.id}-${occurrence.replace(/[^a-zA-Z0-9_-]/g, '')}`;
-    if (task.data.completedAt) {
-      await edit(
-        [
-          {
-            id: task.id,
-            kind: 'task',
-            data: { completedAt: '', status: 'To do' },
-          },
-          { id, kind: 'completion', data: { _deleted: true } },
-        ],
-        'Reopened task',
-      );
-      return;
-    }
+    const transition = await completionEdits(task);
     const unmet = entities.filter(
       (e) =>
+        !transition.reopened &&
         task.data.dependencies.includes(e.id) &&
         e.kind === 'task' &&
         !e.data.completedAt,
@@ -548,44 +531,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         `Complete dependencies first: ${unmet.map((e) => e.data.title).join(', ')}`,
       );
     await edit(
-      [
-        {
-          id,
-          kind: 'completion',
-          data: {
-            task: task.id,
-            title: task.data.title,
-            at: new Date().toISOString(),
-            due: task.data.due,
-            _deleted: false,
-          },
-        },
-        {
-          id: task.id,
-          kind: 'task',
-          data: next
-            ? {
-                due: next,
-                recurrenceAnchor: task.data.recurrenceAnchor || task.data.due,
-                time: task.data.time,
-                occurrence: next,
-                completedAt: '',
-                status: 'To do',
-                checklist: (task.data.checklist || []).map((c) => ({
-                  ...c,
-                  done: false,
-                })),
-                subtasks: task.data.subtasks.map((c) => ({
-                  ...c,
-                  done: false,
-                })),
-              }
-            : { completedAt: new Date().toISOString(), status: 'Done' },
-        },
-      ],
-      next ? 'Completed occurrence and scheduled next task' : 'Completed task',
+      transition.edits,
+      transition.reopened
+        ? 'Reopened task'
+        : transition.next
+          ? 'Completed occurrence and scheduled next task'
+          : 'Completed task',
     );
-    notice(next ? `Completed. Next: ${next}` : 'Task completed');
+    if (!transition.reopened)
+      notice(
+        transition.next
+          ? `Completed. Next: ${transition.next}`
+          : 'Task completed',
+      );
   };
   return (
     <Context.Provider
