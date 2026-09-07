@@ -469,13 +469,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const media = matchMedia('(prefers-color-scheme: dark)');
     const apply = () => {
+      const custom = settings.theme === 'custom';
       document.documentElement.classList.toggle(
         'dark',
-        settings.theme === 'dark' ||
-          (settings.theme === 'system' && media.matches),
+        !custom &&
+          (settings.theme === 'dark' ||
+            (settings.theme === 'system' && media.matches)),
       );
       document.documentElement.classList.toggle('no-motion', !settings.motion);
       document.documentElement.style.setProperty('--primary', settings.accent);
+      const colors: Record<string, string> = {
+        '--background': settings.workspaceBackground,
+        '--card': settings.surfaceColor,
+        '--foreground': settings.textColor,
+        '--muted': settings.mutedColor,
+        '--muted-foreground': settings.mutedTextColor,
+        '--border': settings.borderColor,
+        '--sidebar': settings.sidebarColor,
+        '--accent': settings.accentSurfaceColor,
+      };
+      for (const [property, value] of Object.entries(colors))
+        if (custom) document.documentElement.style.setProperty(property, value);
+        else document.documentElement.style.removeProperty(property);
       document.documentElement.dataset.density = settings.density;
       document.documentElement.dataset.font = settings.font;
       document.documentElement.style.setProperty(
@@ -489,6 +504,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [
     settings.theme,
     settings.accent,
+    settings.workspaceBackground,
+    settings.surfaceColor,
+    settings.textColor,
+    settings.mutedColor,
+    settings.mutedTextColor,
+    settings.borderColor,
+    settings.sidebarColor,
+    settings.accentSurfaceColor,
     settings.motion,
     settings.density,
     settings.font,
@@ -580,10 +603,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         edit,
         add: async (kind, data, label) => {
           const id = uid();
-          await edit(
-            [{ id, kind, data } as Edit],
-            label || `Created ${kind}`,
-          );
+          await edit([{ id, kind, data } as Edit], label || `Created ${kind}`);
           return id;
         },
         update: async (e, data, label) =>

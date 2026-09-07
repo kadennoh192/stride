@@ -423,13 +423,24 @@ function validateShape(e: EntityCandidate) {
     case 'settings':
       optional(d, 'name', (v) => typeof v === 'string' && v.length <= 100);
       optional(d, 'theme', (v) =>
-        ['light', 'dark', 'system'].includes(String(v)),
+        ['light', 'dark', 'system', 'custom'].includes(String(v)),
       );
-      optional(
-        d,
+      for (const key of [
         'accent',
-        (v) => typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v),
-      );
+        'workspaceBackground',
+        'surfaceColor',
+        'textColor',
+        'mutedColor',
+        'mutedTextColor',
+        'borderColor',
+        'sidebarColor',
+        'accentSurfaceColor',
+      ])
+        optional(
+          d,
+          key,
+          (v) => typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v),
+        );
       optional(d, 'density', (v) =>
         ['compact', 'comfortable', 'spacious'].includes(String(v)),
       );

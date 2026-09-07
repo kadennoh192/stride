@@ -1502,6 +1502,26 @@ td select {
 .no-motion * {
   scroll-behavior: auto !important;
 }
+.custom-theme {
+  margin: 24px 0;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+.custom-theme h3 {
+  margin: 0 0 16px;
+}
+.contrast-status {
+  display: block;
+  margin: 12px 0;
+  color: var(--good);
+  font-size: 14px;
+}
+.contrast-status.low {
+  color: #c74250;
+  font-weight: 600;
+}
 [data-density='compact'] .task-row {
   padding-top: 12px;
   padding-bottom: 12px;

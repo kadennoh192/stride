@@ -32,6 +32,7 @@ void test('runtime validation rejects malformed task, editor, schema, settings, 
   for (const data of [
     { theme: 'solarized' },
     { accent: 'url(https://tracker.example/pixel)' },
+    { workspaceBackground: 'transparent' },
     { density: 'microscopic' },
     { font: 'remote-font' },
     { motion: 'yes' },
@@ -59,6 +60,19 @@ void test('runtime validation rejects malformed task, editor, schema, settings, 
     );
   assert.doesNotThrow(() =>
     validateEntity({ id: 'settings', kind: 'settings', data: defaults }),
+  );
+  assert.doesNotThrow(() =>
+    validateEntity({
+      id: 'settings',
+      kind: 'settings',
+      data: {
+        ...defaults,
+        theme: 'custom',
+        workspaceBackground: '#111827',
+        surfaceColor: '#1f2937',
+        textColor: '#f9fafb',
+      },
+    }),
   );
   assert.throws(() =>
     validateEntity({
