@@ -1,4 +1,4 @@
-import { getLocalFile, saveFile, hashBlob } from './storage';
+import { getLocalFile, cacheDownloadedFile, hashBlob } from './storage';
 export async function fileURL(id: string, owner: string) {
   const local = await getLocalFile(id, owner);
   if (local) return URL.createObjectURL(local.blob);
@@ -6,7 +6,10 @@ export async function fileURL(id: string, owner: string) {
     throw new Error(
       'This attachment is missing on this device. Restore it from a complete backup.',
     );
-  const response = await fetch(`/api/files/${encodeURIComponent(id)}`);
+  const response = await fetch(`/api/files/${encodeURIComponent(id)}`, {
+    headers: { 'X-Stride-Owner': owner },
+    cache: 'no-store',
+  });
   if (!response.ok)
     throw new Error(
       'This attachment has not downloaded yet. Reconnect and retry.',
@@ -15,8 +18,8 @@ export async function fileURL(id: string, owner: string) {
   const expected = response.headers.get('X-Content-SHA256');
   if (expected && expected !== (await hashBlob(blob)))
     throw new Error('Attachment integrity check failed. Please retry.');
-  await saveFile(id, blob, owner, 'attachment', true);
-  return URL.createObjectURL(blob);
+  const saved = await cacheDownloadedFile(id, blob, owner);
+  return URL.createObjectURL(saved.blob);
 }
 export function downloadBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);

@@ -1,4 +1,4 @@
-import type { Entity, Field } from './types';
+import type { Entity, EntityCandidate, Field } from './types';
 interface Index {
   groups: Map<string, Map<string, Field>>;
   entities: Map<string, Entity>;
@@ -39,13 +39,13 @@ export function putField(fields: Record<string, Field>, field: Field) {
   }
 }
 function build(fields: Iterable<Field>): Entity | undefined {
-  let entity: Entity | undefined;
+  let entity: EntityCandidate | undefined;
   for (const f of fields) {
     entity ??= { id: f.entity, kind: f.kind, data: {} };
     if (f.key === '_deleted') entity.deleted = f.value === true;
     else entity.data[f.key] = f.value;
   }
-  return entity;
+  return entity as Entity | undefined;
 }
 export function entityFromFields(
   fields: Record<string, Field>,
@@ -57,9 +57,9 @@ export function entityFromFields(
     let result = base;
     for (const f of draft.groups.get(id)?.values() || []) {
       if (result === base)
-        result = base
+        result = (base
           ? { ...base, data: { ...base.data } }
-          : { id, kind: f.kind, data: {} };
+          : { id, kind: f.kind, data: {} }) as Entity;
       if (f.key === '_deleted') result!.deleted = f.value === true;
       else result!.data[f.key] = f.value;
     }

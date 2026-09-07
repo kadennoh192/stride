@@ -1,3 +1,4 @@
+import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
@@ -6,7 +7,16 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { Miniflare } from 'miniflare';
-import { blank, applyEdits } from '../lib/stride/storage';
+import { uploadFile } from '../lib/stride/upload';
+import {
+  hashBlob,
+  blank,
+  applyEdits,
+  saveFile,
+  getLocalFile,
+  uploadProgress,
+  closeStorage,
+} from '../lib/stride/storage';
 import { taskData } from '../lib/stride/types';
 
 void test('real D1 sync enforces account ownership, idempotence, durable scheduling, and outage handling', async () => {
@@ -57,7 +67,7 @@ void test('real D1 sync enforces account ownership, idempotence, durable schedul
     await build({
       stdin: {
         contents:
-          "export * as sync from './app/api/sync/route'; export * as auth from './app/api/auth/route'; export * as files from './app/api/files/[id]/route'; export * as reminders from './lib/server/reminders';",
+          "export * as upload from './app/api/files/[id]/upload/route'; export * as sync from './app/api/sync/route'; export * as auth from './app/api/auth/route'; export * as files from './app/api/files/[id]/route'; export * as reminders from './lib/server/reminders';",
         resolveDir: process.cwd(),
       },
       outfile: output,
@@ -194,6 +204,20 @@ void test('real D1 sync enforces account ownership, idempotence, durable schedul
       503,
     );
     outage = false;
+    assert.equal(
+      (
+        await api.files.GET(
+          new Request('https://stride.test/api/files/test-file', {
+            headers: {
+              Cookie: 'stride_access=valid-alice',
+              'X-Stride-Owner': 'bob',
+            },
+          }),
+          { params: Promise.resolve({ id: 'test-file' }) },
+        )
+      ).status,
+      409,
+    );
     const bytes = new TextEncoder().encode('attachment bytes');
     const digest = [
       ...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
@@ -226,6 +250,169 @@ void test('real D1 sync enforces account ownership, idempotence, durable schedul
     assert.equal(await downloaded.text(), 'attachment bytes');
     assert.equal(downloaded.headers.get('X-Content-SHA256'), digest);
     assert.equal(downloaded.headers.get('Cache-Control'), 'private, no-store');
+    const payload = new Uint8Array(2_400_123);
+    for (let i = 0; i < payload.length; i++) payload[i] = i % 251;
+    await saveFile(
+      'resumable-file',
+      new Blob([payload]),
+      'alice',
+      'resumable.bin',
+    );
+    const pending = (await getLocalFile('resumable-file', 'alice'))!;
+    const routedFetch = globalThis.fetch;
+    let interrupt = true;
+    const uploadedParts: number[] = [];
+    globalThis.fetch = async (input, init) => {
+      if (typeof input !== 'string' || !input.startsWith('/api/files/'))
+        return routedFetch(input, init);
+      const routeURL = new URL(input, 'https://stride.test');
+      const headers = new Headers(init?.headers);
+      headers.set('Origin', 'https://stride.test');
+      headers.set('Cookie', 'stride_access=valid-alice');
+      if (init?.method === 'PUT') {
+        const part = Number(routeURL.searchParams.get('part'));
+        uploadedParts.push(part);
+        if (interrupt && part === 1) {
+          interrupt = false;
+          return Response.json(
+            { error: 'Simulated interrupted connection' },
+            { status: 503 },
+          );
+        }
+      }
+      const request = new Request(routeURL, { ...init, headers });
+      return init?.method === 'PUT'
+        ? api.upload.PUT(request, {
+            params: Promise.resolve({ id: routeURL.pathname.split('/')[3] }),
+          })
+        : api.upload.POST(request, {
+            params: Promise.resolve({ id: routeURL.pathname.split('/')[3] }),
+          });
+    };
+    await assert.rejects(uploadFile(pending), /interrupted/);
+    assert.equal(
+      (await uploadProgress('resumable-file', 'alice'))?.confirmedBytes,
+      1_000_000,
+    );
+    assert.equal(await FILES.head('alice/resumable-file'), null);
+    await closeStorage();
+    await uploadFile((await getLocalFile('resumable-file', 'alice'))!);
+    assert.deepEqual(uploadedParts, [0, 1, 1, 2]);
+    assert.equal(
+      (await getLocalFile('resumable-file', 'alice'))?.uploaded,
+      true,
+    );
+    assert.equal(await uploadProgress('resumable-file', 'alice'), undefined);
+    const oversizedPart = new Request(
+      `https://stride.test/api/files/resumable-file/upload?hash=${pending.hash}&part=0`,
+      {
+        method: 'PUT',
+        headers: {
+          Origin: 'https://stride.test',
+          Cookie: 'stride_access=valid-alice',
+          'X-Stride-Owner': 'alice',
+          'X-Content-SHA256': pending.hash,
+        },
+        body: new Uint8Array(1_000_001),
+      },
+    );
+    assert.equal(
+      (
+        await api.upload.PUT(oversizedPart, {
+          params: Promise.resolve({ id: 'resumable-file' }),
+        })
+      ).status,
+      413,
+    );
+    const completedFile = await FILES.get('alice/resumable-file');
+    assert.deepEqual(
+      new Uint8Array(await completedFile!.arrayBuffer()),
+      payload,
+    );
+    await uploadFile(pending);
+    assert.deepEqual(uploadedParts, [0, 1, 1, 2]);
+    await saveFile('empty-file', new Blob([]), 'alice', 'empty.txt');
+    await uploadFile((await getLocalFile('empty-file', 'alice'))!);
+    assert.equal((await FILES.head('alice/empty-file'))?.size, 0);
+    await saveFile('repair-file', new Blob([payload]), 'alice', 'repair.bin');
+    const repair = (await getLocalFile('repair-file', 'alice'))!;
+    const repairHeaders = {
+      Origin: 'https://stride.test',
+      Cookie: 'stride_access=valid-alice',
+      'X-Stride-Owner': 'alice',
+      'Content-Type': 'application/json',
+    };
+    const repairBegin = new Request(
+      'https://stride.test/api/files/repair-file/upload',
+      {
+        method: 'POST',
+        headers: repairHeaders,
+        body: JSON.stringify({
+          action: 'begin',
+          hash: repair.hash,
+          size: payload.length,
+          type: '',
+          name: 'repair.bin',
+        }),
+      },
+    );
+    assert.equal(
+      (
+        await api.upload.POST(repairBegin, {
+          params: Promise.resolve({ id: 'repair-file' }),
+        })
+      ).status,
+      200,
+    );
+    // Simulate a storage fault after a chunk was acknowledged: metadata remains correct but its bytes differ.
+    const partHash = await hashBlob(repair.blob.slice(0, 1_000_000));
+    await FILES.put(
+      `__stride_uploads/alice/repair-file/${repair.hash}/0`,
+      new Uint8Array(1_000_000),
+      { customMetadata: { sha256: partHash } },
+    );
+    await assert.rejects(uploadFile(repair), /integrity check/);
+    assert.equal(
+      await FILES.head(`__stride_uploads/alice/repair-file/${repair.hash}/0`),
+      null,
+    );
+    const sentBeforeRepair = uploadedParts.length;
+    await uploadFile(repair);
+    assert.deepEqual(uploadedParts.slice(sentBeforeRepair), [0]);
+    assert.deepEqual(
+      new Uint8Array(
+        await (await FILES.get('alice/repair-file'))!.arrayBuffer(),
+      ),
+      payload,
+    );
+    globalThis.fetch = routedFetch;
+    const wrongOwner = new Request(
+      'https://stride.test/api/files/resumable-file/upload',
+      {
+        method: 'POST',
+        headers: {
+          Origin: 'https://stride.test',
+          Cookie: 'stride_access=valid-alice',
+          'X-Stride-Owner': 'bob',
+        },
+        body: JSON.stringify({
+          action: 'begin',
+          hash: pending.hash,
+          size: payload.length,
+          type: '',
+          name: 'file',
+        }),
+      },
+    );
+    assert.equal(
+      (
+        await api.upload.POST(wrongOwner, {
+          params: Promise.resolve({ id: 'resumable-file' }),
+        })
+      ).status,
+      409,
+    );
+    await closeStorage();
   } finally {
     globalThis.fetch = originalFetch;
     await mf.dispose();

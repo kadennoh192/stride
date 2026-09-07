@@ -50,12 +50,14 @@ export function stringValue(value: unknown): string {
   return JSON.stringify(value) ?? '';
 }
 
-export interface Entity {
+export interface BaseEntity<K extends Kind, D extends Data> {
   id: string;
-  kind: Kind;
-  data: Data;
+  kind: K;
+  data: D;
   deleted?: boolean;
 }
+/** Untrusted or partially materialized records are validated before becoming Entity values. */
+export type EntityCandidate = BaseEntity<Kind, Data>;
 export interface Field {
   entity: string;
   kind: Kind;
@@ -84,9 +86,9 @@ export interface ChecklistItem {
   title: string;
   done: boolean;
 }
-export interface Task extends Entity {
-  kind: 'task';
-  data: {
+export type Task = BaseEntity<
+  'task',
+  {
     title: string;
     description: string;
     project: string;
@@ -108,28 +110,28 @@ export interface Task extends Entity {
     timezone: string;
     important: boolean;
     [key: string]: unknown;
-  };
-}
-export interface Project extends Entity {
-  kind: 'project';
-  data: {
+  }
+>;
+export type Project = BaseEntity<
+  'project',
+  {
     title: string;
     color: string;
     sections: string[];
     background: string;
     [key: string]: unknown;
-  };
-}
-export interface Page extends Entity {
-  kind: 'page';
-  data: {
+  }
+>;
+export type Page = BaseEntity<
+  'page',
+  {
     title: string;
     icon: string;
     cover: string;
     parent: string;
     [key: string]: unknown;
-  };
-}
+  }
+>;
 export type BlockType =
   | 'paragraph'
   | 'heading1'
@@ -149,9 +151,9 @@ export type BlockType =
   | 'link'
   | 'embed'
   | 'database';
-export interface Block extends Entity {
-  kind: 'block';
-  data: {
+export type Block = BaseEntity<
+  'block',
+  {
     page: string;
     type: BlockType;
     text: string;
@@ -161,8 +163,8 @@ export interface Block extends Entity {
     file?: string;
     name?: string;
     [key: string]: unknown;
-  };
-}
+  }
+>;
 export type PropertyType =
   | 'text'
   | 'number'
@@ -190,27 +192,27 @@ export interface Property {
   property?: string;
   aggregate?: 'count' | 'sum' | 'average' | 'min' | 'max';
 }
-export interface Database extends Entity {
-  kind: 'database';
-  data: {
+export type Database = BaseEntity<
+  'database',
+  {
     title: string;
     properties: Property[];
     dateProperty: string;
     [key: string]: unknown;
-  };
-}
-export interface DatabaseRow extends Entity {
-  kind: 'row';
-  data: {
+  }
+>;
+export type DatabaseRow = BaseEntity<
+  'row',
+  {
     database: string;
     title: string;
     values: Record<string, unknown>;
     [key: string]: unknown;
-  };
-}
-export interface Habit extends Entity {
-  kind: 'habit';
-  data: {
+  }
+>;
+export type Habit = BaseEntity<
+  'habit',
+  {
     title: string;
     icon: string;
     goal: number;
@@ -219,8 +221,114 @@ export interface Habit extends Entity {
     reminder: string;
     days: number[];
     [key: string]: unknown;
-  };
-}
+  }
+>;
+export type HabitLog = BaseEntity<
+  'habitLog',
+  {
+    habit: string;
+    date: string;
+    value: number;
+    goal?: number;
+    [key: string]: unknown;
+  }
+>;
+export type FocusSession = BaseEntity<
+  'session',
+  {
+    at: string;
+    duration: number;
+    phase: 'focus' | 'break' | 'longBreak';
+    task?: string;
+    [key: string]: unknown;
+  }
+>;
+export type Countdown = BaseEntity<
+  'countdown',
+  {
+    title: string;
+    date: string;
+    timezone?: string;
+    [key: string]: unknown;
+  }
+>;
+export type SettingsEntity = BaseEntity<'settings', Settings>;
+export type SavedView = BaseEntity<
+  'view',
+  {
+    title: string;
+    database?: string;
+    layout?: string;
+    sort?: string;
+    sortDirection?: string;
+    group?: string;
+    hidden?: string[];
+    filter?: Record<string, unknown>;
+    [key: string]: unknown;
+  }
+>;
+export type Comment = BaseEntity<
+  'comment',
+  {
+    target: string;
+    text: string;
+    at: string;
+    [key: string]: unknown;
+  }
+>;
+export type Completion = BaseEntity<
+  'completion',
+  {
+    task: string;
+    at: string;
+    title?: string;
+    due?: string;
+    [key: string]: unknown;
+  }
+>;
+export type Template = BaseEntity<
+  'template',
+  {
+    type: 'page' | 'row';
+    title: string;
+    database?: string;
+    pageTemplate?: Page['data'];
+    blocks?: Partial<Block['data']>[];
+    row?: Partial<DatabaseRow['data']>;
+    [key: string]: unknown;
+  }
+>;
+export type Favorite = BaseEntity<
+  'favorite',
+  {
+    title: string;
+    tip: number;
+    [key: string]: unknown;
+  }
+>;
+export type Entity =
+  | Task
+  | Project
+  | Page
+  | Block
+  | Database
+  | DatabaseRow
+  | Habit
+  | HabitLog
+  | FocusSession
+  | Countdown
+  | SettingsEntity
+  | SavedView
+  | Comment
+  | Completion
+  | Template
+  | Favorite;
+export type EntityOf<K extends Kind> = Extract<Entity, { kind: K }>;
+export type EntityData<K extends Kind> = EntityOf<K>['data'];
+export type EntityPatch<K extends Kind> = Partial<EntityData<K>> & Data;
+export type EntityEdit = {
+  [K in Kind]: { id: string; kind: K; data: EntityPatch<K> };
+}[Kind];
 export interface Settings {
   name: string;
   theme: string;
@@ -309,6 +417,7 @@ export function taskData(title: string, extra: Data = {}): Task['data'] {
     ...extra,
   } as Task['data'];
 }
-export function isKind<T extends Entity>(kind: T['kind']) {
-  return (entity: Entity): entity is T => entity.kind === kind;
+export function isKind<K extends Kind>(kind: K) {
+  return (entity: Entity): entity is Extract<Entity, { kind: K }> =>
+    entity.kind === kind;
 }

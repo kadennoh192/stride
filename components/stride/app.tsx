@@ -251,7 +251,7 @@ function Workspace() {
                 'habit',
                 'block',
               ].includes(e.kind) &&
-              `${e.data.title || ''} ${e.data.text || ''} ${e.data.description || ''}`
+              `${stringValue(e.data.title)} ${stringValue(e.data.text)} ${stringValue(e.data.description)}`
                 .toLowerCase()
                 .includes(search.toLowerCase()),
           )
