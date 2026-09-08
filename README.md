@@ -15,4 +15,4 @@ Start with an empty guest workspace. Starter tasks are explicitly optional. Gues
 - [Release acceptance and remaining work](docs/release.md)
 - [Formula language](docs/formulas.md)
 
-Native Apple Watch work is deferred until the web release passes acceptance, as agreed in the implementation plan.
+The lightweight native Apple Watch companion source lives in `apple/StrideWatch`. Its pairing and server-originated sync mutations are covered by the local D1 integration test. Xcode signing, distribution, the production access-gate transition, and physical Watch acceptance remain required before release.

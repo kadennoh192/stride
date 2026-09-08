@@ -499,6 +499,32 @@ h1 {
   border-color: var(--primary);
   color: var(--foreground);
 }
+.watch-pairing {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 20px;
+  margin: 18px 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--muted);
+}
+.watch-pairing > span {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+}
+.watch-pairing > strong {
+  color: var(--primary);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: clamp(24px, 5vw, 36px);
+  letter-spacing: 0.12em;
+}
+.watch-pairing > p {
+  color: var(--muted-foreground);
+  font-size: 14px;
+}
 .task-row {
   display: flex;
   align-items: flex-start;
