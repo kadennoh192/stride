@@ -4,6 +4,7 @@ import {
   transact,
   applyEdits,
   indexedRecordPage,
+  startupProjection,
   closeStorage,
 } from '../lib/stride/storage';
 import { taskData } from '../lib/stride/types';
@@ -56,6 +57,10 @@ const page = await indexedRecordPage(
 );
 const queryMs = performance.now() - queryStart;
 console.log(`Measured indexed page (${page.length} records)`);
+const startupReadStart = performance.now();
+const startup = await startupProjection(owner);
+const startupReadMs = performance.now() - startupReadStart;
+console.log(`Measured startup projection (${startup.length} records)`);
 const samples: number[] = [];
 for (let n = 0; n < sampleCount; n++) {
   const start = performance.now();
@@ -89,6 +94,8 @@ console.log(
       editMaxMs: Math.max(...samples),
       indexedPageMs: queryMs,
       pageSize: page.length,
+      startupProjectionMs: startupReadMs,
+      startupProjectionSize: startup.length,
     },
     null,
     2,

@@ -69,6 +69,13 @@ void test('version-three records gain active indexes without reviving tombstones
     ['Active'],
   );
   const db = await openDB();
+  assert.equal(
+    db
+      .transaction('records')
+      .objectStore('records')
+      .indexNames.contains('ownerKindDueActive'),
+    true,
+  );
   const records = await new Promise<Record<string, unknown>[]>(
     (resolve, reject) => {
       const request = db.transaction('records').objectStore('records').getAll();

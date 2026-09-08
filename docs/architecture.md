@@ -13,7 +13,7 @@
 
 ## Local storage contract
 
-The IndexedDB database `stride-workspace` is schema version 4. Portable snapshots and the sync/export protocol remain version 2; those versions are independent. Schema 4 adds tombstone-safe active-record indexes and ID-inclusive keyset indexes; upgrades backfill the derived active flag without rewriting canonical fields or operation history.
+The IndexedDB database `stride-workspace` is schema version 5. Portable snapshots and the sync/export protocol remain version 2; those versions are independent. Schema 4 added tombstone-safe active-record indexes and ID-inclusive keyset indexes; schema 5 adds an owner/kind/active/due index for bounded task startup reads. Upgrades backfill the derived active flag when needed without rewriting canonical fields or operation history.
 
 `meta` contains owner identity, logical clock, sync cursor, and a revision used to invalidate caches across tabs. `fields`, `records`, `operations`, and `conflicts` are indexed by owner. Records also have kind, container, and due-date indexes. Files, the outgoing attachment queue, and recovery snapshots have separate stores.
 
@@ -29,7 +29,7 @@ Custom page and row templates are normalized into complete creation payloads bef
 
 Version-one data migrates to unclaimed guest storage. Version-two snapshots migrate to indexed owner stores. Version-three record indexes are backfilled in place for keyset paging. The old stores remain intact and a recovery snapshot is retained. Legacy attachment bytes remain available. A blocked migration asks the user to close older tabs rather than deleting data.
 
-The current UI still loads a complete owner snapshot, including database rows and history. Storage exposes tombstone-safe keyset pagination that seeks from a stable record ID without walking earlier rows. Moving the database UI and initial workspace load fully onto paged queries remains release work.
+Task routes can render from an owner-isolated, bounded startup projection while the complete conflict and sync snapshot hydrates in the background. The projection loads up to 100 undated tasks, 300 tasks due through the next 90 days, route-scoped project tasks, navigation records, settings, and recent completions. Non-task features and exhaustive search wait for the full snapshot; partial task counts and search results are labelled while hydration is in progress. Storage also exposes tombstone-safe keyset pagination that seeks from a stable record ID without walking earlier rows. Removing the background full-owner hydration and moving feature stores and search fully onto paged queries remains release work.
 
 ## Sync protocol
 
