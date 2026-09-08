@@ -369,6 +369,10 @@ export interface Settings {
   model: string;
   quietStart: string;
   quietEnd: string;
+  taskViews: Record<string, string>;
+  calendarView: string;
+  calendarSpan: number;
+  calendarShowCompleted: boolean;
   [key: string]: unknown;
 }
 export const defaults: Settings = {
@@ -398,6 +402,10 @@ export const defaults: Settings = {
   model: 'gemini-2.5-flash',
   quietStart: '22:00',
   quietEnd: '07:00',
+  taskViews: {},
+  calendarView: 'month',
+  calendarSpan: 4,
+  calendarShowCompleted: false,
 };
 export function uid() {
   return crypto.randomUUID();

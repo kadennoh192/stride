@@ -39,11 +39,13 @@ export function CalendarView({
   onReschedule?: (id: string, date: string) => void;
 }) {
   const store = useStride();
-  const [mode, setMode] = useState(fixed || 'month');
+  const [mode, setMode] = useState(fixed || store.settings.calendarView);
   const active = fixed || mode;
   const [anchor, setAnchor] = useState(dateKey());
-  const [span, setSpan] = useState(4);
-  const [showCompleted, setShowCompleted] = useState(false);
+  const [span, setSpan] = useState(store.settings.calendarSpan);
+  const [showCompleted, setShowCompleted] = useState(
+    store.settings.calendarShowCompleted,
+  );
   const [limit, setLimit] = useState(100);
   const visible = tasks.filter((t) => showCompleted || !t.data.completedAt);
   const date = new Date(anchor + 'T12:00Z');
@@ -137,14 +139,22 @@ export function CalendarView({
           <Select
             label="Calendar view"
             value={active}
-            onChange={setMode}
+            onChange={(next) => {
+              setMode(next);
+              void store.setSettings({ calendarView: next });
+            }}
             options={modes}
           />
           <label className="checkline">
             <input
               type="checkbox"
               checked={showCompleted}
-              onChange={(e) => setShowCompleted(e.target.checked)}
+              onChange={(e) => {
+                setShowCompleted(e.target.checked);
+                void store.setSettings({
+                  calendarShowCompleted: e.target.checked,
+                });
+              }}
             />
             Show completed
           </label>
@@ -193,7 +203,11 @@ export function CalendarView({
             <Select
               label="Visible days or weeks"
               value={stringValue(span)}
-              onChange={(v) => setSpan(Number(v))}
+              onChange={(v) => {
+                const next = Number(v);
+                setSpan(next);
+                void store.setSettings({ calendarSpan: next });
+              }}
               options={['2', '3', '4', '5', '6']}
             />
           )}

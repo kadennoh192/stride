@@ -445,6 +445,60 @@ h1 {
 .section-heading > svg {
   color: var(--muted-foreground);
 }
+.project-sections {
+  display: grid;
+  gap: 8px;
+}
+.task-section {
+  border-radius: 10px;
+  transition: background 160ms ease;
+}
+.task-section:has(.task-row[draggable='true']:active) {
+  background: var(--muted);
+}
+.task-section-heading {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  border-bottom: 1px solid var(--border);
+}
+.section-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  text-align: left;
+}
+.section-toggle strong {
+  font-size: 14px;
+  font-weight: 650;
+}
+.section-toggle span {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.task-section-items {
+  padding-left: 24px;
+}
+.empty-section {
+  width: 100%;
+  min-height: 48px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  margin: 8px 0 12px;
+  background: transparent;
+  color: var(--muted-foreground);
+  text-align: left;
+  padding: 0 14px;
+}
+.empty-section:hover {
+  border-color: var(--primary);
+  color: var(--foreground);
+}
 .task-row {
   display: flex;
   align-items: flex-start;
