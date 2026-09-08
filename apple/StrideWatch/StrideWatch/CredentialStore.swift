@@ -50,14 +50,14 @@ enum StoreError: LocalizedError {
     case keychain
     case invalidOrigin
     case invalidResponse
-    case server(String)
+    case server(status: Int, message: String)
 
     var errorDescription: String? {
         switch self {
         case .keychain: "The secure connection could not be saved."
         case .invalidOrigin: "The Stride server address is invalid."
         case .invalidResponse: "Stride returned an unreadable response."
-        case .server(let message): message
+        case .server(_, let message): message
         }
     }
 }

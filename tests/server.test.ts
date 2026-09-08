@@ -666,9 +666,22 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       ),
       false,
     );
+    assert.equal(
+      (
+        await api.watch.POST(
+          watchRequest('POST', {
+            action: 'completeTask',
+            taskId: 'test-task',
+          }),
+        )
+      ).status,
+      200,
+      'replayed completion does not reopen the task',
+    );
     watchResponse = await api.watch.POST(
       watchRequest('POST', {
         action: 'createTask',
+        id: 'watch-captured-task',
         title: 'Captured on Watch',
       }),
     );
@@ -679,7 +692,25 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       ).tasks.some((task) => task.title === 'Captured on Watch'),
     );
     watchResponse = await api.watch.POST(
-      watchRequest('POST', { action: 'startTimer', minutes: 25 }),
+      watchRequest('POST', {
+        action: 'createTask',
+        id: 'watch-captured-task',
+        title: 'Captured on Watch',
+      }),
+    );
+    assert.equal(watchResponse.status, 200, 'replayed quick add is idempotent');
+    assert.equal(
+      (
+        (await watchResponse.json()) as { tasks: { id: string }[] }
+      ).tasks.filter((task) => task.id === 'watch-captured-task').length,
+      1,
+    );
+    watchResponse = await api.watch.POST(
+      watchRequest('POST', {
+        action: 'startTimer',
+        minutes: 25,
+        startedAt: Date.now(),
+      }),
     );
     assert.equal(watchResponse.status, 200);
     assert.equal(
@@ -687,6 +718,20 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
         .running,
       true,
     );
+    watchResponse = await api.watch.POST(
+      watchRequest('POST', {
+        action: 'pauseTimer',
+        remaining: 900,
+      }),
+    );
+    assert.equal(watchResponse.status, 200);
+    const pausedTimer = (
+      (await watchResponse.json()) as {
+        timer: { running: boolean; remaining: number };
+      }
+    ).timer;
+    assert.equal(pausedTimer.running, false);
+    assert.equal(pausedTimer.remaining, 900);
     assert.equal(
       (await api.watchPair.POST(pairingRequest('revoke'))).status,
       200,

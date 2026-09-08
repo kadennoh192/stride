@@ -104,16 +104,25 @@ export async function POST(request: Request) {
     const input = JSON.parse(text) as Record<string, unknown>;
     const entities = await cloudEntities(owner);
     if (input.action === 'createTask') {
+      const id = typeof input.id === 'string' ? input.id : '';
       const title = typeof input.title === 'string' ? input.title.trim() : '';
       const due = typeof input.due === 'string' ? input.due : '';
       const time = typeof input.time === 'string' ? input.time : '';
       const priority = Number(input.priority || 4);
       const settings = entities.find((entity) => entity.id === 'settings');
+      const existing = entities.find((entity) => entity.id === id);
+      if (!/^[a-zA-Z0-9_-]{1,150}$/.test(id))
+        throw new Error('Invalid task identifier');
+      if (existing) {
+        if (existing.kind === 'task' && existing.data.title === title)
+          return Response.json(await snapshot(owner), { headers: noStore });
+        throw new Error('Task identifier already exists');
+      }
       await saveCloudEdits(
         owner,
         [
           {
-            id: uid(),
+            id,
             kind: 'task',
             data: taskData(title, {
               due,
@@ -131,6 +140,8 @@ export async function POST(request: Request) {
           entity.kind === 'task' && entity.id === input.taskId,
       );
       if (!task) throw new Error('Task not found');
+      if (task.data.completedAt)
+        return Response.json(await snapshot(owner), { headers: noStore });
       const unmet = entities.filter(
         (entity) =>
           entity.kind === 'task' &&
@@ -151,8 +162,10 @@ export async function POST(request: Request) {
       );
       const date = typeof input.date === 'string' ? input.date : '';
       const value = Number(input.value);
-      if (!habit || !validDate(date) || !Number.isFinite(value) || value < 0)
+      if (!validDate(date) || !Number.isFinite(value) || value < 0)
         throw new Error('Invalid habit log');
+      if (!habit)
+        return Response.json(await snapshot(owner), { headers: noStore });
       const id = await habitLogId(habit.id, date);
       await saveCloudEdits(
         owner,
@@ -167,17 +180,24 @@ export async function POST(request: Request) {
       );
     } else if (input.action === 'startTimer') {
       const minutes = Number(input.minutes);
-      const task = typeof input.taskId === 'string' ? input.taskId : '';
+      const requestedTask =
+        typeof input.taskId === 'string' ? input.taskId : '';
+      const startedAt = Number(input.startedAt);
       if (
         !Number.isInteger(minutes) ||
         minutes < 1 ||
         minutes > 240 ||
-        (task &&
-          !entities.some(
-            (entity) => entity.kind === 'task' && entity.id === task,
-          ))
+        !Number.isFinite(startedAt) ||
+        startedAt <= 0 ||
+        startedAt > Date.now() + 60_000 ||
+        (requestedTask && !/^[a-zA-Z0-9_-]{1,150}$/.test(requestedTask))
       )
         throw new Error('Invalid timer');
+      const task = entities.some(
+        (entity) => entity.kind === 'task' && entity.id === requestedTask,
+      )
+        ? requestedTask
+        : '';
       const duration = minutes * 60;
       await saveCloudEdits(
         owner,
@@ -191,7 +211,7 @@ export async function POST(request: Request) {
                 phase: 'focus',
                 duration,
                 remaining: duration,
-                end: Date.now() + duration * 1000,
+                end: startedAt + duration * 1000,
                 running: true,
                 cycle: 1,
                 task,
@@ -205,8 +225,21 @@ export async function POST(request: Request) {
       const settings = entities.find((entity) => entity.id === 'settings');
       const timer = settings?.data.activeTimer;
       if (!timer || typeof timer !== 'object')
-        throw new Error('No active timer');
-      const active = timer as { end: number; remaining: number };
+        return Response.json(await snapshot(owner), { headers: noStore });
+      const active = timer as {
+        duration: number;
+        end: number;
+        remaining: number;
+      };
+      const requestedRemaining = Number(input.remaining);
+      const remaining = Number.isFinite(requestedRemaining)
+        ? Math.min(active.duration, Math.max(0, requestedRemaining))
+        : Math.max(
+            0,
+            active.end
+              ? Math.ceil((active.end - Date.now()) / 1000)
+              : active.remaining,
+          );
       await saveCloudEdits(
         owner,
         [
@@ -217,12 +250,7 @@ export async function POST(request: Request) {
               activeTimer: {
                 ...timer,
                 running: false,
-                remaining: Math.max(
-                  0,
-                  active.end
-                    ? Math.ceil((active.end - Date.now()) / 1000)
-                    : active.remaining,
-                ),
+                remaining,
                 end: 0,
               },
             },

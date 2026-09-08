@@ -4,9 +4,10 @@ import UserNotifications
 
 @MainActor
 final class AppModel: ObservableObject {
-    @Published private(set) var snapshot: WatchSnapshot?
+    @Published private(set) var snapshot = OfflineStore.snapshot()
     @Published private(set) var connected = CredentialStore.read() != nil
     @Published private(set) var busy = false
+    @Published private(set) var pendingCount = OfflineStore.queue().count
     @Published var message = ""
 
     private let api: WatchAPI?
@@ -24,13 +25,16 @@ final class AppModel: ObservableObject {
             try CredentialStore.save(result.token)
             connected = true
             snapshot = try await api.refresh(token: result.token)
+            persist()
         }
     }
 
     func refresh() async {
         await run {
             guard let api, let token else { return }
+            try await replayPending(using: api, token: token)
             snapshot = try await api.refresh(token: token)
+            persist()
         }
     }
 
@@ -39,7 +43,7 @@ final class AppModel: ObservableObject {
     }
 
     func addTask(_ title: String) async {
-        await perform(.createTask(title: title))
+        await perform(.createTask(id: UUID().uuidString, title: title))
     }
 
     func log(_ habit: WatchHabit) async {
@@ -48,7 +52,13 @@ final class AppModel: ObservableObject {
     }
 
     func startFocus(minutes: Int, task: String = "") async {
-        await perform(.startTimer(minutes: minutes, task: task))
+        await perform(
+            .startTimer(
+                minutes: minutes,
+                task: task,
+                startedAt: Date().timeIntervalSince1970 * 1_000
+            )
+        )
         guard let timer = snapshot?.timer, timer.running else { return }
         let center = UNUserNotificationCenter.current()
         if (try? await center.requestAuthorization(options: [.alert, .sound])) == true {
@@ -65,7 +75,15 @@ final class AppModel: ObservableObject {
     }
 
     func pauseFocus() async {
-        await perform(.pauseTimer)
+        let remaining: Double
+        if let timer = snapshot?.timer {
+            remaining = timer.running
+                ? max(0, timer.endDate.timeIntervalSinceNow)
+                : timer.remaining
+        } else {
+            remaining = 0
+        }
+        await perform(.pauseTimer(remaining: remaining))
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["stride-focus"])
     }
 
@@ -73,13 +91,26 @@ final class AppModel: ObservableObject {
         CredentialStore.remove()
         snapshot = nil
         connected = false
+        pendingCount = 0
+        OfflineStore.removeAll()
         message = ""
     }
 
     private func perform(_ action: WatchAction) async {
-        await run {
-            guard let api, let token else { return }
+        guard !busy, let api, let token else { return }
+        busy = true
+        message = ""
+        defer { busy = false }
+        do {
+            try await replayPending(using: api, token: token)
             snapshot = try await api.perform(action, token: token)
+            persist()
+        } catch is URLError {
+            enqueue(action)
+        } catch StoreError.server(let status, _) where status >= 500 {
+            enqueue(action)
+        } catch {
+            handle(error)
         }
     }
 
@@ -88,13 +119,123 @@ final class AppModel: ObservableObject {
         busy = true
         message = ""
         defer { busy = false }
-        do { try await operation() }
-        catch {
-            message = error.localizedDescription
-            if case StoreError.server(let text) = error, text.contains("Pair this watch") {
-                disconnect()
-                message = text
+        do {
+            try await operation()
+        } catch {
+            handle(error)
+        }
+    }
+
+    private func persist() {
+        OfflineStore.save(snapshot: snapshot)
+    }
+
+    private func replayPending(using api: WatchAPI, token: String) async throws {
+        var pending = OfflineStore.queue()
+        while let action = pending.first {
+            snapshot = try await api.perform(action, token: token)
+            pending.removeFirst()
+            OfflineStore.save(queue: pending)
+            pendingCount = pending.count
+            persist()
+        }
+    }
+
+    private func handle(_ error: Error) {
+        message = error.localizedDescription
+        if case StoreError.server(let status, let text) = error, status == 401 {
+            disconnect()
+            message = text
+        }
+    }
+
+    private func enqueue(_ action: WatchAction) {
+        var pending = OfflineStore.queue()
+        guard pending.count < 100 else {
+            message = "The offline queue is full. Reconnect before making more changes."
+            return
+        }
+        pending.append(action)
+        OfflineStore.save(queue: pending)
+        pendingCount = pending.count
+        applyLocally(action)
+        persist()
+        message = "Saved on this watch. It will sync after reconnecting."
+    }
+
+    private func applyLocally(_ action: WatchAction) {
+        var current = snapshot ?? emptySnapshot()
+        switch action {
+        case .createTask(let id, let title):
+            current.tasks.append(
+                WatchTask(
+                    id: id,
+                    title: title,
+                    due: "",
+                    time: "",
+                    priority: 4,
+                    tags: [],
+                    project: "inbox"
+                )
+            )
+        case .completeTask(let id):
+            current.tasks.removeAll { $0.id == id }
+        case .logHabit(let id, _, let value):
+            if let index = current.habits.firstIndex(where: { $0.id == id }) {
+                let habit = current.habits[index]
+                current.habits[index] = WatchHabit(
+                    id: habit.id,
+                    title: habit.title,
+                    icon: habit.icon,
+                    goal: habit.goal,
+                    unit: habit.unit,
+                    value: value
+                )
+            }
+        case .startTimer(let minutes, let task, let startedAt):
+            let duration = Double(minutes * 60)
+            current.timer = WatchTimer(
+                id: UUID().uuidString,
+                phase: "focus",
+                duration: duration,
+                remaining: duration,
+                end: startedAt + duration * 1_000,
+                running: true,
+                cycle: 1,
+                task: task
+            )
+        case .pauseTimer(let remaining):
+            if let timer = current.timer {
+                current.timer = WatchTimer(
+                    id: timer.id,
+                    phase: timer.phase,
+                    duration: timer.duration,
+                    remaining: remaining,
+                    end: 0,
+                    running: false,
+                    cycle: timer.cycle,
+                    task: timer.task
+                )
             }
         }
+        snapshot = current
+    }
+
+    private func emptySnapshot() -> WatchSnapshot {
+        let formatter = ISO8601DateFormatter()
+        let day = DateFormatter()
+        day.calendar = Calendar(identifier: .gregorian)
+        day.locale = Locale(identifier: "en_CA_POSIX")
+        day.timeZone = .current
+        day.dateFormat = "yyyy-MM-dd"
+        return WatchSnapshot(
+            version: 1,
+            serverTime: formatter.string(from: Date()),
+            today: day.string(from: Date()),
+            timezone: TimeZone.current.identifier,
+            tasks: [],
+            habits: [],
+            timer: nil
+        )
     }
 }

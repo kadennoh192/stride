@@ -4,7 +4,7 @@ This directory contains the lightweight independent watchOS companion. It uses S
 
 The companion pairs with a signed-in Stride workspace through a one-time eight-character code generated in **Settings → Apple Watch**. The server stores only hashes of pairing credentials. The resulting device token stays in the watch Keychain, expires after one year, and can be revoked from Stride.
 
-The current source supports upcoming and undated tasks, task completion with recurrence/dependency rules, quick task capture, today's habits, and a shared focus timer. Every watch mutation is written through Stride's normal field/change protocol so browsers receive it on their next sync.
+The current source supports upcoming and undated tasks, task completion with recurrence/dependency rules, quick task capture, today's habits, and a shared focus timer. It retains a bounded workspace snapshot and up to 100 pending actions in app-local storage, applies supported actions optimistically while offline, and replays them in order after reconnecting. Stable task IDs and absolute habit values make retries idempotent. Every accepted watch mutation is written through Stride's normal field/change protocol so browsers receive it on their next sync.
 
 ## Build and device validation
 
