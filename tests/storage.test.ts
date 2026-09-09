@@ -13,6 +13,7 @@ import {
   listRecovery,
   restoreSnapshot,
   startupProjection,
+  searchRecords,
 } from '../lib/stride/storage';
 import { dateKey, defaults, taskData, uid } from '../lib/stride/types';
 import {
@@ -378,6 +379,75 @@ void test('startup projection is bounded, route-aware, and owner-isolated', asyn
   assert.equal(ids.has('settings'), true);
   assert.equal(ids.has('undated-001'), false);
   assert.equal(ids.has('other-owner-task'), false);
+});
+
+void test('durable search preserves substring behavior across edits and owners', async () => {
+  const owner = 'durable-search';
+  await transact((state) => {
+    applyEdits(
+      state,
+      [
+        {
+          id: 'search-task',
+          kind: 'task',
+          data: taskData('Alpha Needle', {
+            description: 'A searchable description',
+          }),
+        },
+        {
+          id: 'deleted-search-task',
+          kind: 'task',
+          data: taskData('Needle deleted'),
+        },
+      ],
+      'Create search fixture',
+    );
+    applyEdits(
+      state,
+      [{ id: 'deleted-search-task', kind: 'task', data: { _deleted: true } }],
+      'Delete search fixture',
+    );
+  }, owner);
+  await transact((state) => {
+    applyEdits(
+      state,
+      [
+        {
+          id: 'other-search-task',
+          kind: 'task',
+          data: taskData('Needle in another account'),
+        },
+      ],
+      'Create other search fixture',
+    );
+  }, 'durable-search-other');
+
+  assert.deepEqual(
+    (await searchRecords(owner, 'PHA NEE')).map((entity) => entity.id),
+    ['search-task'],
+  );
+  assert.deepEqual(
+    (await searchRecords(owner, 'al')).map((entity) => entity.id),
+    ['search-task'],
+  );
+  await transact((state) => {
+    applyEdits(
+      state,
+      [
+        {
+          id: 'search-task',
+          kind: 'task',
+          data: { title: 'Haystack', description: '' },
+        },
+      ],
+      'Update search fixture',
+    );
+  }, owner);
+  assert.deepEqual(await searchRecords(owner, 'needle'), []);
+  assert.deepEqual(
+    (await searchRecords(owner, 'yst')).map((entity) => entity.id),
+    ['search-task'],
+  );
 });
 
 void test('concurrent saves serialize and a quota failure commits neither records nor operations', async () => {

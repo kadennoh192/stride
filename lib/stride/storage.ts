@@ -64,6 +64,14 @@ interface StoredOperation {
   pending: number;
   sequence: number;
 }
+const SEARCHABLE_KINDS: Kind[] = [
+  'task',
+  'page',
+  'project',
+  'database',
+  'habit',
+  'block',
+];
 const cached = new Map<string, { snapshot: Snapshot; revision: number }>();
 let dbPromise: Promise<IDBDatabase> | undefined;
 function metadata(snapshot: Snapshot, revision: number): StoredMeta {
@@ -290,6 +298,15 @@ function indexedRecord(owner: string, e: Entity) {
     due: stringValue(e.data.due || ''),
   };
 }
+
+function normalizedSearch(value: string) {
+  return value
+    .normalize('NFKC')
+    .toLocaleLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function getSnapshot(
   tx: IDBTransaction,
   owner: string,
@@ -574,6 +591,40 @@ function entityFromIndexedRecord(value: Record<string, unknown>): Entity {
     ...entity
   } = value;
   return entity as unknown as Entity;
+}
+
+/** Searches the durable record index without hydrating the full workspace. */
+export async function searchRecords(
+  owner: string,
+  rawQuery: string,
+  limit = 50,
+): Promise<Entity[]> {
+  const database = await openDB();
+  const query = normalizedSearch(rawQuery.slice(0, 1000));
+  const maximum = Math.max(1, Math.min(100, Math.floor(limit) || 50));
+  const results: Entity[] = [];
+  for (const kind of SEARCHABLE_KINDS) {
+    const records = await new Promise<Record<string, unknown>[]>(
+      (resolve, reject) => {
+        const request = database
+          .transaction('records')
+          .objectStore('records')
+          .index('ownerKindActive')
+          .getAll(IDBKeyRange.only([owner, kind, 1]));
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+      },
+    );
+    for (const value of records) {
+      const entity = entityFromIndexedRecord(value);
+      const searchable = normalizedSearch(
+        `${stringValue(entity.data.title)} ${stringValue(entity.data.text)} ${stringValue(entity.data.description)}`,
+      );
+      if (searchable.includes(query)) results.push(entity);
+      if (results.length >= maximum) return results;
+    }
+  }
+  return results;
 }
 
 export async function indexedDueRecords(

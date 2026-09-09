@@ -36,7 +36,7 @@ import {
   CheckCheck,
 } from 'lucide-react';
 import { StoreProvider, useStride } from '@/lib/stride/store';
-import { type Task, type Project } from '@/lib/stride/types';
+import { type Entity, type Task, type Project } from '@/lib/stride/types';
 import { Tasks, TaskEditor, ProjectEditor } from './features/tasks';
 import { Calendar } from './features/views';
 import { useMediaQuery } from '@/hooks/use-media-query';
@@ -141,6 +141,19 @@ function Workspace() {
   const compact = useMediaQuery('(max-width: 1023px)');
   const sidebarRef = useRef<HTMLElement>(null);
   const [search, setSearch] = useState<string | null>(null);
+  const [searchResults, setSearchResults] = useState<Entity[]>([]);
+  const [searchState, setSearchState] = useState<
+    'idle' | 'searching' | 'done' | 'error'
+  >('idle');
+  const searchRun = useRef(0);
+  const searchWorkspace = store.search;
+  const openSearch = () => {
+    searchRun.current++;
+    setNavOpen(false);
+    setSearchResults([]);
+    setSearchState('searching');
+    setSearch('');
+  };
   const [taskEditor, setTaskEditor] = useState<Task | 'new' | null>(null);
   const [initial, setInitial] = useState<Record<string, unknown>>({});
   const [projectEditor, setProjectEditor] = useState<Project | 'new' | null>(
@@ -179,11 +192,27 @@ function Workspace() {
     (!!routeProject && routeProject === store.startupProject) ||
     route.startsWith('filter/');
   useEffect(() => {
+    const run = ++searchRun.current;
+    if (search === null) return;
+    const timer = setTimeout(() => {
+      setSearchState('searching');
+      void searchWorkspace(search)
+        .then((entities) => {
+          if (searchRun.current !== run) return;
+          setSearchResults(entities);
+          setSearchState('done');
+        })
+        .catch(() => {
+          if (searchRun.current === run) setSearchState('error');
+        });
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [search, searchWorkspace]);
+  useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        setNavOpen(false);
-        setSearch('');
+        openSearch();
       }
       if (e.key === 'Escape') setNavOpen(false);
       if (
@@ -248,32 +277,13 @@ function Workspace() {
   const filters = store.entities.filter(
     (e) => e.kind === 'view' && e.data.filter,
   );
-  const results =
-    search !== null
-      ? store.entities
-          .filter(
-            (e) =>
-              [
-                'task',
-                'page',
-                'project',
-                'database',
-                'habit',
-                'block',
-              ].includes(e.kind) &&
-              `${stringValue(e.data.title)} ${stringValue(e.data.text)} ${stringValue(e.data.description)}`
-                .toLowerCase()
-                .includes(search.toLowerCase()),
-          )
-          .slice(0, 50)
-      : [];
   const title =
     names[route] ||
     stringValue(
       store.entities.find((e) => e.id === route.split('/')[1])?.data.title ||
         'Workspace',
     );
-  const goResult = (e: (typeof store.entities)[number]) => {
+  const goResult = (e: Entity) => {
     setSearch(null);
     if (e.kind === 'task') {
       setTaskEditor(e as Task);
@@ -337,8 +347,7 @@ function Workspace() {
         <button
           className="search-button"
           onClick={() => {
-            setNavOpen(false);
-            setSearch('');
+            openSearch();
           }}
         >
           <Search size={17} />
@@ -500,8 +509,7 @@ function Workspace() {
               className="icon-button"
               aria-label="Search"
               onClick={() => {
-                setNavOpen(false);
-                setSearch('');
+                openSearch();
               }}
             >
               <Search size={18} />
@@ -589,8 +597,7 @@ function Workspace() {
           </button>
           <button
             onClick={() => {
-              setNavOpen(false);
-              setSearch('');
+              openSearch();
             }}
           >
             <Search />
@@ -634,16 +641,25 @@ function Workspace() {
             aria-label="Workspace search"
             placeholder="Tasks, pages, projects, blocks…"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              searchRun.current++;
+              setSearchResults([]);
+              setSearchState('searching');
+              setSearch(e.target.value);
+            }}
           />
           <div className="search-results">
-            {store.hydrating && (
+            {searchState === 'searching' && (
               <output className="hydration-notice">
-                Finishing the workspace index. Search results may still be
-                arriving.
+                Searching this device…
               </output>
             )}
-            {results.map((e) => (
+            {searchState === 'error' && (
+              <p role="alert" className="form-error">
+                Search is unavailable. Please retry.
+              </p>
+            )}
+            {searchResults.map((e) => (
               <button
                 key={e.id}
                 className="search-result"
@@ -658,7 +674,7 @@ function Workspace() {
                 <small>{e.kind}</small>
               </button>
             ))}
-            {results.length === 0 && !store.hydrating && (
+            {searchResults.length === 0 && searchState === 'done' && (
               <p className="muted">No matching records.</p>
             )}
           </div>

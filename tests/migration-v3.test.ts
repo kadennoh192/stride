@@ -61,7 +61,8 @@ void test('version-three records gain active indexes without reviving tombstones
     };
   });
 
-  const { indexedRecords, openDB } = await import('../lib/stride/storage');
+  const { indexedRecords, openDB, searchRecords } =
+    await import('../lib/stride/storage');
   assert.deepEqual(
     (await indexedRecords('alice', 'task', 'project-a')).map(
       (record) => record.data.title,
@@ -75,6 +76,10 @@ void test('version-three records gain active indexes without reviving tombstones
       .objectStore('records')
       .indexNames.contains('ownerKindDueActive'),
     true,
+  );
+  assert.deepEqual(
+    (await searchRecords('alice', 'ctiv')).map((record) => record.id),
+    ['active'],
   );
   const records = await new Promise<Record<string, unknown>[]>(
     (resolve, reject) => {
