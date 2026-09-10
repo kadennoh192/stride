@@ -1,7 +1,11 @@
 import { env } from 'cloudflare:workers';
 export function authConfig() {
   const e = env as unknown as Record<string, string>;
-  return { url: e.SUPABASE_URL || '', key: e.SUPABASE_ANON_KEY || '' };
+  return {
+    url: e.SUPABASE_URL || '',
+    key: e.SUPABASE_ANON_KEY || '',
+    ownerEmail: (e.STRIDE_OWNER_EMAIL || '').trim().toLowerCase(),
+  };
 }
 export function cookies(request: Request): Record<string, string> {
   const result: Record<string, string> = Object.create(null);
@@ -34,7 +38,7 @@ export async function getUser(
 ): Promise<{ id: string; email: string } | null> {
   const config = authConfig();
   const token = cookies(request).stride_access;
-  if (!token || !config.url || !config.key) return null;
+  if (!token || !config.url || !config.key || !config.ownerEmail) return null;
   try {
     const response = await fetch(`${config.url}/auth/v1/user`, {
       headers: { apikey: config.key, Authorization: `Bearer ${token}` },
@@ -43,6 +47,8 @@ export async function getUser(
     if (response.status === 401 || response.status === 403) return null;
     if (!response.ok) throw new Error('Account service unavailable');
     const user = (await response.json()) as { id: string; email: string };
+    if (user.email.trim().toLowerCase() !== config.ownerEmail)
+      return null;
     return user.id ? user : null;
   } catch {
     throw new Error('Account service unavailable');

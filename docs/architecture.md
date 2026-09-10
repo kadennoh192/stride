@@ -13,7 +13,7 @@
 
 ## Local storage contract
 
-The IndexedDB database `stride-workspace` is schema version 5. Portable snapshots and the sync/export protocol remain version 2; those versions are independent. Schema 4 added tombstone-safe active-record indexes and ID-inclusive keyset indexes; schema 5 adds an owner/kind/active/due index for bounded task startup reads. Upgrades backfill the derived active flag when needed without rewriting canonical fields or operation history.
+The IndexedDB database `stride-workspace` is schema version 6. Portable snapshots and the sync/export protocol remain version 2; those versions are independent. Schema 4 added tombstone-safe active-record indexes and ID-inclusive keyset indexes; schema 5 added an owner/kind/active/due index for bounded task startup reads; schema 6 adds bounded trigram search indexes plus a safe overflow path for unusually long text. Upgrades rebuild derived active, routing, due, and search values without rewriting canonical fields or operation history.
 
 `meta` contains owner identity, logical clock, sync cursor, and a revision used to invalidate caches across tabs. `fields`, `records`, `operations`, and `conflicts` are indexed by owner. Records also have kind, container, and due-date indexes. Files, the outgoing attachment queue, and recovery snapshots have separate stores.
 

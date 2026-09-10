@@ -10,6 +10,7 @@ Set runtime values through Sites environment configuration, never in `.openai/ho
 | -------------------------- | --------------------------------------------------------------------------- |
 | `SUPABASE_URL`             | Supabase project HTTPS origin                                               |
 | `SUPABASE_ANON_KEY`        | Supabase client/anonymous key for Auth REST calls; never a service-role key |
+| `STRIDE_OWNER_EMAIL`       | Lowercase email allowed to create and use the private Stride account        |
 | `VAPID_PUBLIC_KEY`         | Web Push public application-server key                                      |
 | `VAPID_PRIVATE_KEY`        | Secret matching private key                                                 |
 | `VAPID_SUBJECT`            | VAPID contact URI                                                           |
@@ -22,6 +23,8 @@ For local configuration, copy `.dev.vars.example` to `.dev.vars`, fill values lo
 ## Supabase email flows
 
 Configure the production Site URL, allowlisted callback origin, verification, and production email delivery in Supabase. This implementation accepts `token_hash` and `type` query parameters at the app root and verifies them through `/api/auth`; it does not consume an implicit-flow access-token fragment.
+
+Set `STRIDE_OWNER_EMAIL` before enabling account creation. The server rejects sign-up, sign-in, recovery, refreshed sessions, and authenticated workspace access for other email addresses. Create and verify the owner account, then keep the allowlist value configured for every deployment.
 
 Confirmation template link:
 
@@ -56,6 +59,8 @@ Enable notifications from Settings on each device. On iPhone, Web Push requires 
 The independent watchOS app reads `STRIDE_API_ORIGIN` from its Info.plist. Set it to the final HTTPS application origin before signing. A private Sites access gate rejects the watch's bearer-token requests before they reach `/api/watch`, so native pairing must remain a development-only control until that origin is reachable by the intended account audience. Do not embed a Sites bypass token, Supabase credential, or watch bearer token in the app bundle.
 
 Generate the Xcode project from `apple/StrideWatch/project.yml`, select the release signing team and bundle identifier, and validate on both a watchOS 10+ simulator and physical Watch. Pairing requires a configured Stride account. Revoke test tokens in Settings after acceptance.
+
+The browser-based Watch Link at `/watch` is a separate online-only convenience surface. Create it from **Settings → Apple Watch**, send it only to the owner, and revoke it immediately if the message or link is exposed. Its credential is placed in the URL fragment so it is not included in the HTTP request URL, then retained locally where the Watch web view permits. It never accepts offline writes and does not claim background refresh or notification delivery.
 
 ## Rollout gate
 

@@ -15,6 +15,36 @@ async function body(request: Request) {
 export async function POST(request: Request) {
   try {
     const input = await body(request);
+    if (input.action === 'createLink') {
+      if (!sameOrigin(request))
+        return Response.json({ error: 'Origin not allowed' }, { status: 403 });
+      const user = await authorize(request);
+      if (user instanceof Response) return user;
+      if (!user)
+        return Response.json(
+          { error: 'Sign in before creating a Watch Link.' },
+          { status: 401, headers: noStore },
+        );
+      const token = randomToken();
+      const now = new Date();
+      const expires = new Date(now);
+      expires.setUTCFullYear(expires.getUTCFullYear() + 1);
+      await db()
+        .prepare(
+          'INSERT INTO watch_tokens (token_hash,owner,created,expires) VALUES (?,?,?,?)',
+        )
+        .bind(
+          `token:${await sha256(token)}`,
+          user.id,
+          now.toISOString(),
+          expires.toISOString(),
+        )
+        .run();
+      return Response.json(
+        { token, expires: expires.toISOString() },
+        { headers: noStore },
+      );
+    }
     if (input.action === 'create') {
       if (!sameOrigin(request))
         return Response.json({ error: 'Origin not allowed' }, { status: 403 });

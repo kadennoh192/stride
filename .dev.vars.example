@@ -1,6 +1,8 @@
 # Optional server account configuration. Guest mode works without it.
 SUPABASE_URL=
 SUPABASE_ANON_KEY=
+# Required for private production accounts. Only this email may sign up or sign in.
+STRIDE_OWNER_EMAIL=
 # Optional background Web Push configuration.
 VAPID_PUBLIC_KEY=
 VAPID_PRIVATE_KEY=
