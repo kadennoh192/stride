@@ -31,6 +31,8 @@ D1 commits field updates, change history, deduplication IDs, and reminder schedu
 
 Changes to different fields merge. Competing values on the same field retain both alternatives in the conflict inbox. Delete/edit races retain edited content behind the tombstone and offer an explicit restore choice. Legacy operations without entity revision context have weaker deletion-conflict detection. Cross-device graph conflicts and richer entity revision semantics still need additional release validation.
 
+Task completion events use a SHA-256-derived ID from task identity and occurrence. Devices completing the same occurrence therefore converge to one bounded analytics record. Differing non-empty completion timestamps use last-writer-wins rather than creating a non-actionable same-event conflict; a completion deletion racing retained content still enters the deletion-conflict path.
+
 Retry triggers include connectivity, foregrounding, queued edits, and a bounded backoff. An authentication outage returns 503 rather than switching the workspace to guest. Account APIs never enter the service worker cache.
 
 ## Attachments and backups
