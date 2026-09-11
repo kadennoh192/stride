@@ -26,9 +26,10 @@ self.addEventListener('fetch', event => {
       try {
         const response = await fetch(request);
         // Keep the installed shell matched to its build until the safe update activates.
-        if (response.status >= 500) return await caches.match('/') || response;
+        if (response.status >= 500 && url.pathname !== '/watch') return await caches.match('/') || response;
         return response;
       } catch {
+        if (url.pathname === '/watch') return new Response('<!doctype html><meta name="viewport" content="width=device-width"><title>Stride Watch Link</title><main style="font:16px system-ui;padding:24px;text-align:center"><h1>Internet needed</h1><p>Watch Link does not save changes offline. Reconnect, then reopen your link.</p></main>',{status:503,headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}});
         return await caches.match('/') || new Response('Stride has not finished installing for offline use. Reconnect once to finish setup.', {status:503,headers:{'Content-Type':'text/plain'}});
       }
     })());

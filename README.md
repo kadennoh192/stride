@@ -15,4 +15,4 @@ Start with an empty guest workspace. Starter tasks are explicitly optional. Gues
 - [Release acceptance and remaining work](docs/release.md)
 - [Formula language](docs/formulas.md)
 
-The lightweight native Apple Watch companion source lives in `apple/StrideWatch`. Its pairing and server-originated sync mutations are covered by the local D1 integration test. Xcode signing, distribution, the production access-gate transition, and physical Watch acceptance remain required before release.
+The lightweight native Apple Watch companion source lives in `apple/StrideWatch`. An online-only browser companion is also available at `/watch` through a revocable link created in Settings. Pairing and server-originated sync mutations are covered by the local D1 integration test. Xcode signing and native distribution remain future work; physical Watch Link acceptance remains required when the target device is available.

@@ -518,7 +518,7 @@ export function Focus() {
             ) : (
               <>
                 <Play size={19} />
-                Start
+                {active ? 'Resume' : 'Start'}
               </>
             )}
           </button>
@@ -691,9 +691,17 @@ export function Countdowns() {
         className="inset-panel form-grid"
         onSubmit={async (e) => {
           e.preventDefault();
+          const form = new FormData(e.currentTarget);
+          const title = stringValue(form.get('title')).trim();
+          const localDate = stringValue(form.get('date'));
+          const parsedDate = new Date(localDate);
+          if (!title || !localDate || !Number.isFinite(parsedDate.getTime())) {
+            store.notice('Choose a valid event name, date, and time.');
+            return;
+          }
           await store.add('countdown', {
-            title: newTitle,
-            date: new Date(date).toISOString(),
+            title,
+            date: parsedDate.toISOString(),
             timezone: zone,
           });
           setTitle('');
@@ -702,6 +710,7 @@ export function Countdowns() {
       >
         <Field label="Event">
           <input
+            name="title"
             required
             value={newTitle}
             onChange={(e) => setTitle(e.target.value)}
@@ -709,6 +718,7 @@ export function Countdowns() {
         </Field>
         <Field label={`Date and time · ${zone}`}>
           <input
+            name="date"
             required
             type="datetime-local"
             value={date}

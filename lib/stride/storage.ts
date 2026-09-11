@@ -19,7 +19,7 @@ import {
   shiftDate,
 } from './types';
 import { validateEntity, validateGraph, validField } from './validation';
-export const VERSION = 5;
+export const VERSION = 6;
 export const SNAPSHOT_VERSION = 2;
 export interface Snapshot {
   version: number;
@@ -72,6 +72,7 @@ const SEARCHABLE_KINDS: Kind[] = [
   'habit',
   'block',
 ];
+const SEARCH_INDEX_CHARACTERS = 4096;
 const cached = new Map<string, { snapshot: Snapshot; revision: number }>();
 let dbPromise: Promise<IDBDatabase> | undefined;
 function metadata(snapshot: Snapshot, revision: number): StoredMeta {
@@ -170,14 +171,32 @@ export function openDB() {
           'due',
           'id',
         ]);
-      if (event.oldVersion > 0 && event.oldVersion < 4) {
+      if (!records.indexNames.contains('searchGrams'))
+        records.createIndex('searchGrams', 'searchGrams', {
+          multiEntry: true,
+        });
+      if (!records.indexNames.contains('ownerKindSearchOverflow'))
+        records.createIndex('ownerKindSearchOverflow', [
+          'owner',
+          'kind',
+          'active',
+          'searchOverflow',
+        ]);
+      if (event.oldVersion > 0 && event.oldVersion < 6) {
         const existingRecords = records.openCursor();
         existingRecords.onsuccess = () => {
           const cursor = existingRecords.result;
           if (!cursor) return;
+          const next = indexedRecord(
+            stringValue(cursor.value.owner),
+            entityFromIndexedRecord(cursor.value),
+          );
+          // Version-three records may only have the derived container/due
+          // values. Retain those while adding the newer active/search indexes.
           cursor.update({
-            ...cursor.value,
-            active: cursor.value.deleted ? 0 : 1,
+            ...next,
+            container: next.container || stringValue(cursor.value.container),
+            due: next.due || stringValue(cursor.value.due),
           });
           cursor.continue();
         };
@@ -288,6 +307,8 @@ export function openDB() {
   }));
 }
 function indexedRecord(owner: string, e: Entity) {
+  const searchable = searchableText(e);
+  const characters = Array.from(searchable);
   return {
     ...e,
     owner,
@@ -296,6 +317,16 @@ function indexedRecord(owner: string, e: Entity) {
       e.data.database || e.data.page || e.data.project || '',
     ),
     due: stringValue(e.data.due || ''),
+    searchGrams:
+      !e.deleted && SEARCHABLE_KINDS.includes(e.kind)
+        ? searchTrigrams(characters.slice(0, SEARCH_INDEX_CHARACTERS))
+        : [],
+    searchOverflow:
+      !e.deleted &&
+      SEARCHABLE_KINDS.includes(e.kind) &&
+      characters.length > SEARCH_INDEX_CHARACTERS
+        ? 1
+        : 0,
   };
 }
 
@@ -305,6 +336,25 @@ function normalizedSearch(value: string) {
     .toLocaleLowerCase()
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function searchableText(entity: Entity) {
+  if (entity.deleted || !SEARCHABLE_KINDS.includes(entity.kind)) return '';
+  return normalizedSearch(
+    `${stringValue(entity.data.title)} ${stringValue(entity.data.text)} ${stringValue(entity.data.description)}`,
+  );
+}
+
+function searchTrigrams(value: string | string[]) {
+  const characters = typeof value === 'string' ? Array.from(value) : value;
+  if (characters.length < 3) return [];
+  return [
+    ...new Set(
+      Array.from({ length: characters.length - 2 }, (_, index) =>
+        characters.slice(index, index + 3).join(''),
+      ),
+    ),
+  ];
 }
 
 function getSnapshot(
@@ -588,6 +638,8 @@ function entityFromIndexedRecord(value: Record<string, unknown>): Entity {
     container: _container,
     due: _due,
     active: _active,
+    searchGrams: _searchGrams,
+    searchOverflow: _searchOverflow,
     ...entity
   } = value;
   return entity as unknown as Entity;
@@ -602,27 +654,93 @@ export async function searchRecords(
   const database = await openDB();
   const query = normalizedSearch(rawQuery.slice(0, 1000));
   const maximum = Math.max(1, Math.min(100, Math.floor(limit) || 50));
-  const results: Entity[] = [];
-  for (const kind of SEARCHABLE_KINDS) {
-    const records = await new Promise<Record<string, unknown>[]>(
-      (resolve, reject) => {
-        const request = database
-          .transaction('records')
-          .objectStore('records')
-          .index('ownerKindActive')
-          .getAll(IDBKeyRange.only([owner, kind, 1]));
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => resolve(request.result);
-      },
+  const readIndex = (
+    index: 'ownerKindActive' | 'searchGrams' | 'ownerKindSearchOverflow',
+    key: IDBValidKey,
+  ) =>
+    new Promise<Record<string, unknown>[]>((resolve, reject) => {
+      const request = database
+        .transaction('records')
+        .objectStore('records')
+        .index(index)
+        .getAll(IDBKeyRange.only(key));
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result);
+    });
+  const countIndex = (index: 'searchGrams', key: IDBValidKey) =>
+    new Promise<number>((resolve, reject) => {
+      const request = database
+        .transaction('records')
+        .objectStore('records')
+        .index(index)
+        .count(IDBKeyRange.only(key));
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result);
+    });
+  const validCandidate = (value: Record<string, unknown>) =>
+    value.owner === owner &&
+    value.active === 1 &&
+    SEARCHABLE_KINDS.includes(value.kind as Kind);
+  let candidates: Record<string, unknown>[];
+  if (Array.from(query).length < 3) {
+    candidates = (
+      await Promise.all(
+        SEARCHABLE_KINDS.map((kind) =>
+          readIndex('ownerKindActive', [owner, kind, 1]),
+        ),
+      )
+    ).flat();
+  } else {
+    const grams = searchTrigrams(query);
+    const selectedGrams = [
+      grams[0],
+      grams[Math.floor(grams.length / 2)],
+      grams.at(-1)!,
+    ].filter((gram, index, values) => values.indexOf(gram) === index);
+    const counts = await Promise.all(
+      selectedGrams.map(async (gram) => ({
+        gram,
+        count: await countIndex('searchGrams', gram),
+      })),
     );
-    for (const value of records) {
-      const entity = entityFromIndexedRecord(value);
-      const searchable = normalizedSearch(
-        `${stringValue(entity.data.title)} ${stringValue(entity.data.text)} ${stringValue(entity.data.description)}`,
-      );
-      if (searchable.includes(query)) results.push(entity);
-      if (results.length >= maximum) return results;
-    }
+    const rarest = counts.reduce((best, candidate) =>
+      candidate.count < best.count ? candidate : best,
+    );
+    const indexed = (
+      rarest.count ? await readIndex('searchGrams', rarest.gram) : []
+    ).filter(validCandidate);
+    const overflow = (
+      await Promise.all(
+        SEARCHABLE_KINDS.map((kind) =>
+          readIndex('ownerKindSearchOverflow', [owner, kind, 1, 1]),
+        ),
+      )
+    ).flat();
+    candidates = [
+      ...new Map(
+        [...indexed, ...overflow]
+          .filter(validCandidate)
+          .map((value) => [
+            `${stringValue(value.kind)}:${stringValue(value.id)}`,
+            value,
+          ]),
+      ).values(),
+    ];
+  }
+  candidates.sort((a, b) => {
+    const kind =
+      SEARCHABLE_KINDS.indexOf(a.kind as Kind) -
+      SEARCHABLE_KINDS.indexOf(b.kind as Kind);
+    if (kind) return kind;
+    const left = stringValue(a.id),
+      right = stringValue(b.id);
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
+  const results: Entity[] = [];
+  for (const value of candidates) {
+    const entity = entityFromIndexedRecord(value);
+    if (searchableText(entity).includes(query)) results.push(entity);
+    if (results.length >= maximum) break;
   }
   return results;
 }

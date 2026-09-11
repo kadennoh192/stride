@@ -44,6 +44,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       FILES,
       SUPABASE_URL: 'https://auth.stride.test',
       SUPABASE_ANON_KEY: 'test-public-key',
+      STRIDE_OWNER_EMAIL: 'alice@example.test',
       VAPID_PUBLIC_KEY: 'test-public-key',
       VAPID_PRIVATE_KEY: 'test-private-key',
       VAPID_SUBJECT: 'mailto:owner@stride.test',
@@ -60,6 +61,21 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       if (url.startsWith('https://auth.stride.test/')) {
         if (outage)
           return Response.json({ error: 'Unavailable' }, { status: 503 });
+        if (url.endsWith('/auth/v1/verify')) {
+          const rawBody = typeof init?.body === 'string' ? init.body : '{}';
+          const payload = JSON.parse(rawBody) as {
+            token_hash?: string;
+          };
+          const owner = payload.token_hash === 'owner-verification';
+          return Response.json({
+            access_token: owner ? 'valid-alice' : 'valid-intruder',
+            refresh_token: owner ? 'refresh-alice' : 'refresh-intruder',
+            user: {
+              id: owner ? 'alice' : 'intruder',
+              email: owner ? 'alice@example.test' : 'intruder@example.test',
+            },
+          });
+        }
         const token = new Headers(init?.headers).get('Authorization');
         return token === 'Bearer valid-alice'
           ? Response.json({ id: 'alice', email: 'alice@example.test' })
@@ -391,6 +407,111 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       503,
     );
     outage = false;
+    const accountStatus = await api.auth.GET(
+      new Request('https://stride.test/api/auth'),
+    );
+    assert.equal(accountStatus.status, 200);
+    assert.equal(
+      ((await accountStatus.json()) as { signupAllowed: boolean })
+        .signupAllowed,
+      true,
+    );
+    const testEnvironment = globals.__strideTestEnv as Record<string, unknown>;
+    const configuredOwnerEmail = testEnvironment.STRIDE_OWNER_EMAIL;
+    delete testEnvironment.STRIDE_OWNER_EMAIL;
+    const failClosedStatus = await api.auth.GET(
+      new Request('https://stride.test/api/auth'),
+    );
+    assert.deepEqual(await failClosedStatus.json(), {
+      configured: false,
+      signupAllowed: false,
+      user: null,
+    });
+    const failClosedLogin = await api.auth.POST(
+      new Request('https://stride.test/api/auth', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://stride.test',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'login',
+          email: 'alice@example.test',
+          password: 'owner-password',
+        }),
+      }),
+    );
+    assert.equal(failClosedLogin.status, 503);
+    assert.equal((await api.sync.POST(make(input))).status, 401);
+    testEnvironment.STRIDE_OWNER_EMAIL = configuredOwnerEmail;
+    const rejectedAccount = await api.auth.POST(
+      new Request('https://stride.test/api/auth', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://stride.test',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'signup',
+          email: 'intruder@example.test',
+          password: 'not-the-owner-password',
+        }),
+      }),
+    );
+    assert.equal(rejectedAccount.status, 403);
+    const verifyRequest = (token_hash: string) =>
+      new Request('https://stride.test/api/auth', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://stride.test',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'verify',
+          token_hash,
+          type: 'email',
+        }),
+      });
+    const rejectedVerification = await api.auth.POST(
+      verifyRequest('intruder-verification'),
+    );
+    assert.equal(rejectedVerification.status, 403);
+    assert.match(
+      rejectedVerification.headers.get('set-cookie') || '',
+      /stride_access=;.*Max-Age=0/,
+    );
+    const acceptedVerification = await api.auth.POST(
+      verifyRequest('owner-verification'),
+    );
+    assert.equal(acceptedVerification.status, 200);
+    assert.match(
+      acceptedVerification.headers.get('set-cookie') || '',
+      /stride_access=valid-alice/,
+    );
+    const rejectedPasswordUpdate = await api.auth.POST(
+      new Request('https://stride.test/api/auth', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://stride.test',
+          'Content-Type': 'application/json',
+          Cookie: 'stride_access=valid-intruder',
+        },
+        body: JSON.stringify({ action: 'password', password: 'new-password' }),
+      }),
+    );
+    assert.equal(rejectedPasswordUpdate.status, 401);
+    const acceptedPasswordUpdate = await api.auth.POST(
+      new Request('https://stride.test/api/auth', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://stride.test',
+          'Content-Type': 'application/json',
+          Cookie: 'stride_access=valid-alice',
+        },
+        body: JSON.stringify({ action: 'password', password: 'new-password' }),
+      }),
+    );
+    assert.equal(acceptedPasswordUpdate.status, 200);
     assert.equal(
       (
         await api.files.GET(
@@ -645,6 +766,60 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
         ...(value ? { body: JSON.stringify(value) } : {}),
       });
     assert.equal(
+      (
+        await api.watchPair.POST(
+          new Request('https://stride.test/api/watch/pair', {
+            method: 'POST',
+            headers: {
+              Origin: 'https://evil.test',
+              Cookie: 'stride_access=valid-alice',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ action: 'createLink' }),
+          }),
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await api.watchPair.POST(
+          new Request('https://stride.test/api/watch/pair', {
+            method: 'POST',
+            headers: {
+              Origin: 'https://stride.test',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ action: 'createLink' }),
+          }),
+        )
+      ).status,
+      401,
+    );
+    const linkResponse = await api.watchPair.POST(pairingRequest('createLink'));
+    assert.equal(linkResponse.status, 200);
+    const linkData = (await linkResponse.json()) as {
+      token: string;
+      expires: string;
+    };
+    assert.match(linkData.token, /^[A-Za-z0-9_-]{43}$/);
+    assert.ok(Date.parse(linkData.expires) > Date.now());
+    assert.equal(
+      (await api.watch.GET(watchRequest('GET', undefined, linkData.token)))
+        .status,
+      200,
+    );
+    const storedWatchTokens = await DB.prepare(
+      "SELECT token_hash FROM watch_tokens WHERE owner='alice'",
+    ).all<{ token_hash: string }>();
+    assert.equal(
+      storedWatchTokens.results.some((row) =>
+        row.token_hash.includes(linkData.token),
+      ),
+      false,
+      'raw Watch Link tokens are never stored',
+    );
+    assert.equal(
       (await api.watch.GET(watchRequest('GET', undefined, 'x'.repeat(43))))
         .status,
       401,
@@ -737,6 +912,11 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       200,
     );
     assert.equal((await api.watch.GET(watchRequest())).status, 401);
+    assert.equal(
+      (await api.watch.GET(watchRequest('GET', undefined, linkData.token)))
+        .status,
+      401,
+    );
     await closeStorage();
   } finally {
     globalThis.fetch = originalFetch;

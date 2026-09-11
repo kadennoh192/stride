@@ -42,6 +42,7 @@ import { uploadFile } from './upload';
 import { completionEdits } from './completion';
 interface Account {
   configured: boolean;
+  signupAllowed: boolean;
   user: { id: string; email: string } | null;
 }
 interface Store {
@@ -95,6 +96,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [owner, setOwner] = useState('');
   const [account, setAccount] = useState<Account>({
     configured: false,
+    signupAllowed: false,
     user: null,
   });
   const [error, setError] = useState('');

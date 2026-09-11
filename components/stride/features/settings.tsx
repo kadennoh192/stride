@@ -12,6 +12,8 @@ import {
   Bell,
   Trash2,
   Watch,
+  Copy,
+  Link2,
 } from 'lucide-react';
 import { useStride } from '@/lib/stride/store';
 import {
@@ -114,6 +116,10 @@ export default function Settings() {
   const [confirmedRestore, setConfirmedRestore] = useState(false);
   const [watchPairing, setWatchPairing] = useState<{
     code: string;
+    expires: string;
+  } | null>(null);
+  const [watchLink, setWatchLink] = useState<{
+    url: string;
     expires: string;
   } | null>(null);
   const [model, setModel] = useState(store.settings.model);
@@ -500,11 +506,15 @@ export default function Settings() {
                 <div>
                   <strong>{store.syncStatus}</strong>
                   <p className="muted">
-                    {store.snapshot?.outbox.length || 0} pending changes · last
-                    sync{' '}
-                    {store.snapshot?.lastSync
-                      ? new Date(store.snapshot.lastSync).toLocaleString()
-                      : 'not yet'}
+                    {store.owner === 'guest'
+                      ? 'Local-only workspace · cloud sync is not active'
+                      : `${store.snapshot?.outbox.length || 0} pending changes · last sync ${
+                          store.snapshot?.lastSync
+                            ? new Date(
+                                store.snapshot.lastSync,
+                              ).toLocaleString()
+                            : 'not yet'
+                        }`}
                   </p>
                 </div>
               </div>
@@ -583,19 +593,21 @@ export default function Settings() {
                     />
                   </Field>
                   <div className="form-actions">
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      disabled={
-                        !store.account.configured ||
-                        busy ||
-                        !email ||
-                        password.length < 8
-                      }
-                      onClick={() => void accountAction('signup')}
-                    >
-                      Create account
-                    </button>
+                    {store.account.signupAllowed && (
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        disabled={
+                          !store.account.configured ||
+                          busy ||
+                          !email ||
+                          password.length < 8
+                        }
+                        onClick={() => void accountAction('signup')}
+                      >
+                        Create owner account
+                      </button>
+                    )}
                     <button
                       className="primary-button"
                       disabled={!store.account.configured || busy}
@@ -611,6 +623,12 @@ export default function Settings() {
                   >
                     Send password recovery email
                   </button>
+                  {!store.account.signupAllowed && store.account.configured && (
+                    <p className="muted">
+                      This is a private workspace. Sign in with its configured
+                      owner email.
+                    </p>
+                  )}
                 </form>
               )}
               <p className="muted">
@@ -675,7 +693,12 @@ export default function Settings() {
                 </button>
                 <button
                   className="secondary-button"
-                  disabled={permission === 'unsupported'}
+                  disabled={
+                    busy ||
+                    !push?.configured ||
+                    !store.account.user ||
+                    permission === 'unsupported'
+                  }
                   onClick={() =>
                     void action(async () => {
                       const registration =
@@ -735,25 +758,64 @@ export default function Settings() {
           )}
           {tab === 'watch' && (
             <>
-              <h2>Apple Watch</h2>
+              <h2>Apple Watch & Watch Link</h2>
               <p className="muted">
-                Pair the native companion to see upcoming tasks, complete work,
-                log today’s habits, add a task and control a focus timer. The
-                watch syncs through your Stride account, so this requires a
-                signed-in account and a publicly reachable production origin.
+                Watch Link is a small online view you can open from Mail or
+                Messages on Apple Watch. It shows upcoming tasks, habits and
+                focus controls. It is not an installed Watch app and does not
+                save changes offline.
               </p>
               {!store.account.user && (
                 <div className="inset-panel">
                   <h3>Sign in before pairing</h3>
                   <p className="muted">
-                    Pairing links the watch to the currently signed-in Stride
-                    workspace. Local guest data never leaves this browser.
+                    A Watch Link connects to the currently signed-in workspace.
+                    Local guest data never leaves this browser.
                   </p>
+                </div>
+              )}
+              {watchLink && (
+                <div className="watch-link-share">
+                  <div>
+                    <Link2 />
+                    <div>
+                      <strong>Your private Watch Link</strong>
+                      <p className="muted">
+                        Expires{' '}
+                        {new Date(watchLink.expires).toLocaleDateString()}.
+                        Anyone with this link can use the limited Watch
+                        controls.
+                      </p>
+                    </div>
+                  </div>
+                  <input
+                    aria-label="Private Watch Link"
+                    readOnly
+                    value={watchLink.url}
+                    onFocus={(event) => event.currentTarget.select()}
+                  />
+                  <button
+                    className="primary-button"
+                    onClick={() =>
+                      void action(async () => {
+                        if (!navigator.clipboard)
+                          throw new Error(
+                            'Select the link above and copy it manually.',
+                          );
+                        await navigator.clipboard.writeText(watchLink.url);
+                        setMessage(
+                          'Watch Link copied. Send it only to yourself.',
+                        );
+                      })
+                    }
+                  >
+                    <Copy /> Copy link
+                  </button>
                 </div>
               )}
               {watchPairing && (
                 <output className="watch-pairing">
-                  <span>PAIRING CODE</span>
+                  <span>NATIVE APP PAIRING CODE</span>
                   <strong>{watchPairing.code}</strong>
                   <p>
                     Enter this code in Stride on Apple Watch before{' '}
@@ -768,6 +830,37 @@ export default function Settings() {
               <div className="form-actions">
                 <button
                   className="primary-button"
+                  disabled={busy || !store.account.user}
+                  onClick={() =>
+                    void action(async () => {
+                      const response = await fetch('/api/watch/pair', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'createLink' }),
+                      });
+                      const data = (await response.json()) as {
+                        token?: string;
+                        expires?: string;
+                        error?: string;
+                      };
+                      if (!response.ok || !data.token || !data.expires)
+                        throw new Error(
+                          data.error || 'Watch Link is unavailable.',
+                        );
+                      setWatchLink({
+                        url: `${location.origin}/watch#token=${encodeURIComponent(data.token)}`,
+                        expires: data.expires,
+                      });
+                      setMessage(
+                        'Watch Link ready. Copy it and send it only to yourself.',
+                      );
+                    })
+                  }
+                >
+                  Create Watch Link
+                </button>
+                <button
+                  className="secondary-button"
                   disabled={busy || !store.account.user}
                   onClick={() =>
                     void action(async () => {
@@ -793,7 +886,7 @@ export default function Settings() {
                     })
                   }
                 >
-                  Generate pairing code
+                  Pair future native app
                 </button>
                 <button
                   className="secondary-button"
@@ -813,19 +906,22 @@ export default function Settings() {
                           data.error || 'Could not disconnect watches.',
                         );
                       setWatchPairing(null);
-                      setMessage('All Apple Watch connections were revoked.');
+                      setWatchLink(null);
+                      setMessage(
+                        'All Watch links and native apps were disconnected.',
+                      );
                     })
                   }
                 >
-                  Disconnect all watches
+                  Revoke all Watch access
                 </button>
               </div>
               <p className="muted">
-                Codes expire after ten minutes. Watch access tokens are kept in
-                the watch Keychain, expire after one year, and can be revoked
-                here at any time. A private Sites access gate blocks native
-                watch traffic; use this after the production origin is opened to
-                your intended audience.
+                Watch links and native-app access expire after one year and can
+                be revoked here at any time. Native pairing codes expire after
+                ten minutes and can be used once. The Watch Link requires an
+                internet connection and a production address reachable from the
+                Watch.
               </p>
             </>
           )}

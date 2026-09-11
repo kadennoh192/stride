@@ -399,6 +399,13 @@ void test('durable search preserves substring behavior across edits and owners',
           kind: 'task',
           data: taskData('Needle deleted'),
         },
+        {
+          id: 'long-search-task',
+          kind: 'task',
+          data: taskData('Long note', {
+            description: `${'x'.repeat(4200)} searchable overflow phrase`,
+          }),
+        },
       ],
       'Create search fixture',
     );
@@ -429,6 +436,10 @@ void test('durable search preserves substring behavior across edits and owners',
   assert.deepEqual(
     (await searchRecords(owner, 'al')).map((entity) => entity.id),
     ['search-task'],
+  );
+  assert.deepEqual(
+    (await searchRecords(owner, 'overflow phrase')).map((entity) => entity.id),
+    ['long-search-task'],
   );
   await transact((state) => {
     applyEdits(

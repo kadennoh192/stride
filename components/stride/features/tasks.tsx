@@ -634,8 +634,30 @@ export function Tasks({
           } as Record<string, string>
         )[route] || 'Tasks');
   const completedToday = store.entities.filter(
-    (e) => e.kind === 'completion' && stringValue(e.data.at).startsWith(today),
+    (e) =>
+      e.kind === 'completion' &&
+      dateKey(
+        new Date(stringValue(e.data.at)),
+        store.settings.timezone || undefined,
+      ) === today,
   ).length;
+  const recurringArchive = useMemo(
+    () =>
+      store.entities
+        .filter((event) => {
+          if (event.kind !== 'completion') return false;
+          const source = tasks.find((task) => task.id === event.data.task);
+          if (source?.data.completedAt) return false;
+          const title = stringValue(event.data.title).toLowerCase();
+          return !query.trim() || title.includes(query.trim().toLowerCase());
+        })
+        .sort((a, b) =>
+          stringValue(b.data.at).localeCompare(stringValue(a.data.at)),
+        ),
+    [store.entities, tasks, query],
+  );
+  const headingCount =
+    shown.length + (route === 'archive' ? recurringArchive.length : 0);
   const pagedTasks = shown.slice(page * 100, page * 100 + 100);
   const sectionGroups = useMemo(() => {
     if (!project) return [];
@@ -687,21 +709,23 @@ export function Tasks({
                   month: 'long',
                   day: 'numeric',
                 })
-              : `${shown.length} ${route === 'archive' ? 'completed' : 'active'} tasks${store.hydrating ? ' loaded so far' : ''}`}
+              : `${headingCount} ${route === 'archive' ? 'completed' : 'active'} task${headingCount === 1 ? '' : 's'}${store.hydrating ? ' loaded so far' : ''}`}
           </p>
         </div>
-        <button
-          className="primary-button"
-          onClick={() =>
-            onAdd({
-              ...(project ? { project: project.id } : {}),
-              ...(route === 'today' ? { due: today } : {}),
-            })
-          }
-        >
-          <Plus size={18} />
-          Add task
-        </button>
+        {route !== 'archive' && (
+          <button
+            className="primary-button"
+            onClick={() =>
+              onAdd({
+                ...(project ? { project: project.id } : {}),
+                ...(route === 'today' ? { due: today } : {}),
+              })
+            }
+          >
+            <Plus size={18} />
+            Add task
+          </button>
+        )}
       </div>
       <div
         className={
@@ -830,7 +854,31 @@ export function Tasks({
           )}
           {view === 'list' ? (
             <>
-              {shown.length === 0 ? (
+              {route === 'archive' &&
+                recurringArchive.map((event) => (
+                  <article className="task-row" key={event.id}>
+                    <span className="task-check" aria-hidden="true">
+                      <Check size={16} />
+                    </span>
+                    <div className="task-main">
+                      <strong>{stringValue(event.data.title)}</strong>
+                      <div className="task-meta">
+                        <span>
+                          Completed{' '}
+                          {new Date(
+                            stringValue(event.data.at),
+                          ).toLocaleString()}
+                        </span>
+                        {!!stringValue(event.data.due) && (
+                          <span>Due {stringValue(event.data.due)}</span>
+                        )}
+                      </div>
+                    </div>
+                    <span className="task-project">Recurring occurrence</span>
+                  </article>
+                ))}
+              {shown.length === 0 &&
+              (route !== 'archive' || recurringArchive.length === 0) ? (
                 <Empty
                   icon={route === 'archive' ? <Archive /> : <Inbox />}
                   title={
