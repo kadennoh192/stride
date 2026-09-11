@@ -133,6 +133,12 @@ export function validateEntity(e: EntityCandidate) {
       optional(d, key, (v) => typeof v === 'string');
     if (d.completedAt && !instant(d.completedAt))
       invalid('Invalid completion timestamp');
+    for (const key of ['recurrenceAnchor', 'occurrence'])
+      optional(
+        d,
+        key,
+        (v) => typeof v === 'string' && (v === '' || validDate(v)),
+      );
     if (
       !/^(none|weekdays|(?:daily|weekly|monthly|yearly|after-days)(?::[1-9]\d{0,2})?)$/.test(
         stringValue(d.recurrence),

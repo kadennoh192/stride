@@ -33,6 +33,8 @@ Changes to different fields merge. Competing values on the same field retain bot
 
 Task completion events use a SHA-256-derived ID from task identity and occurrence. Devices completing the same occurrence therefore converge to one bounded analytics record. Differing non-empty completion timestamps use last-writer-wins rather than creating a non-actionable same-event conflict; a completion deletion racing retained content still enters the deletion-conflict path.
 
+Fixed daily, weekly, weekday, monthly, and yearly recurrences skip missed slots and choose the first date strictly after the completion day in the task's timezone. Monthly/yearly schedules retain their original day anchor across short months. `after-days` remains completion-relative rather than calendar-anchored.
+
 Retry triggers include connectivity, foregrounding, queued edits, and a bounded backoff. An authentication outage returns 503 rather than switching the workspace to guest. Account APIs never enter the service worker cache.
 
 ## Attachments and backups

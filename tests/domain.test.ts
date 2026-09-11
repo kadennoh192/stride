@@ -17,7 +17,10 @@ const task = (extra: Record<string, unknown>): Task => ({
 });
 void test('recurrence preserves month-end anchor and handles weekdays', () => {
   assert.equal(
-    nextOccurrence(task({ due: '2026-01-31', recurrence: 'monthly' })),
+    nextOccurrence(
+      task({ due: '2026-01-31', recurrence: 'monthly' }),
+      new Date('2026-01-31T12:00:00.000Z'),
+    ),
     '2026-02-28',
   );
   assert.equal(
@@ -27,11 +30,15 @@ void test('recurrence preserves month-end anchor and handles weekdays', () => {
         recurrence: 'monthly',
         recurrenceAnchor: '2026-01-31',
       }),
+      new Date('2026-02-28T12:00:00.000Z'),
     ),
     '2026-03-31',
   );
   assert.equal(
-    nextOccurrence(task({ due: '2026-09-04', recurrence: 'weekdays' })),
+    nextOccurrence(
+      task({ due: '2026-09-04', recurrence: 'weekdays' }),
+      new Date('2026-09-04T12:00:00.000Z'),
+    ),
     '2026-09-07',
   );
   assert.equal(
@@ -40,6 +47,67 @@ void test('recurrence preserves month-end anchor and handles weekdays', () => {
       new Date('2026-09-05T12:00Z'),
     ),
     '2026-09-08',
+  );
+});
+void test('overdue recurrence skips missed slots in the task timezone', () => {
+  const completed = new Date('2026-09-07T16:00:00.000Z');
+  assert.equal(
+    nextOccurrence(
+      task({ due: '2026-09-01', recurrence: 'daily', timezone: 'UTC' }),
+      completed,
+    ),
+    '2026-09-08',
+  );
+  assert.equal(
+    nextOccurrence(
+      task({ due: '2026-08-01', recurrence: 'weekly', timezone: 'UTC' }),
+      completed,
+    ),
+    '2026-09-12',
+  );
+  assert.equal(
+    nextOccurrence(
+      task({ due: '2026-09-04', recurrence: 'weekdays', timezone: 'UTC' }),
+      completed,
+    ),
+    '2026-09-08',
+  );
+  assert.equal(
+    nextOccurrence(
+      task({
+        due: '2026-01-31',
+        recurrence: 'monthly',
+        recurrenceAnchor: '2026-01-31',
+        timezone: 'UTC',
+      }),
+      new Date('2026-04-15T12:00:00.000Z'),
+    ),
+    '2026-04-30',
+  );
+});
+void test('recurrence uses the task timezone across a UTC travel boundary', () => {
+  const instant = new Date('2026-09-08T02:30:00.000Z');
+  assert.equal(
+    nextOccurrence(
+      task({
+        due: '2026-09-07',
+        recurrence: 'daily',
+        timezone: 'America/Toronto',
+      }),
+      instant,
+    ),
+    '2026-09-08',
+  );
+  assert.equal(
+    nextOccurrence(
+      task({
+        due: '2026-09-07',
+        recurrence: 'daily',
+        timezone: 'Asia/Tokyo',
+      }),
+      instant,
+    ),
+    '2026-09-09',
   );
 });
 void test('dependency cycles reject indirect loops', () => {
@@ -98,10 +166,15 @@ void test('formula interpreter supports expressions without code execution', () 
 });
 
 void test('formula conditions and boolean operators evaluate only the selected branch', () => {
-  const unread = () => {throw new Error('This branch must not read properties');};
-  assert.equal(formula('if(false, 1 / 0, 1)', unread),1);
-  assert.equal(formula('if(true, "selected", prop("unused"))',unread),'selected');
-  assert.equal(formula('false && prop("unused")',unread),false);
-  assert.equal(formula('true || prop("unused")',unread),true);
-  assert.throws(()=>formula('if(true, 1 / 0, 1)',unread),/zero/);
+  const unread = () => {
+    throw new Error('This branch must not read properties');
+  };
+  assert.equal(formula('if(false, 1 / 0, 1)', unread), 1);
+  assert.equal(
+    formula('if(true, "selected", prop("unused"))', unread),
+    'selected',
+  );
+  assert.equal(formula('false && prop("unused")', unread), false);
+  assert.equal(formula('true || prop("unused")', unread), true);
+  assert.throws(() => formula('if(true, 1 / 0, 1)', unread), /zero/);
 });
