@@ -20,6 +20,7 @@ import {
   ArrowUpRight,
 } from 'lucide-react';
 import { useStride } from '@/lib/stride/store';
+import { habitLogId } from '@/lib/stride/habits';
 import {
   type Habit,
   type Task,
@@ -160,21 +161,21 @@ export function Habits() {
       new Map(
         store.entities
           .filter((e) => e.kind === 'habitLog')
-          .map((e) => [e.id, e]),
+          .map((e) => [`${e.data.habit}\n${e.data.date}`, e]),
       ),
     [store.entities],
   );
-  const log = (h: Habit, d: string) => logs.get(`habitlog-${h.id}-${d}`);
+  const log = (h: Habit, d: string) => logs.get(`${h.id}\n${d}`);
   const value = (h: Habit, d: string) => Number(log(h, d)?.data.value || 0);
   const scheduled = (h: Habit, d: string) =>
     (h.data.days || [0, 1, 2, 3, 4, 5, 6]).includes(
       new Date(d + 'T12:00Z').getUTCDay(),
     );
-  const setValue = (h: Habit, d: string, v: number) =>
+  const setValue = async (h: Habit, d: string, v: number) =>
     store.edit(
       [
         {
-          id: `habitlog-${h.id}-${d}`,
+          id: await habitLogId(h.id, d),
           kind: 'habitLog',
           data: {
             habit: h.id,

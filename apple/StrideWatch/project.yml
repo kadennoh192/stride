@@ -1,0 +1,27 @@
+name: StrideWatch
+options:
+  bundleIdPrefix: app.stride
+  deploymentTarget:
+    watchOS: "10.0"
+targets:
+  StrideWatch:
+    type: application
+    platform: watchOS
+    sources:
+      - StrideWatch
+    info:
+      path: StrideWatch/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.stride.watch
+        PRODUCT_NAME: Stride
+        SWIFT_VERSION: 5.0
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: NO
+schemes:
+  StrideWatch:
+    build:
+      targets:
+        StrideWatch: all
+    run:
+      config: Debug

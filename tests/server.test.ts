@@ -71,7 +71,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
     await build({
       stdin: {
         contents:
-          "export * as upload from './app/api/files/[id]/upload/route'; export * as sync from './app/api/sync/route'; export * as auth from './app/api/auth/route'; export * as files from './app/api/files/[id]/route'; export * as push from './app/api/push/route'; export * as dispatch from './app/api/reminders/route';",
+          "export * as upload from './app/api/files/[id]/upload/route'; export * as sync from './app/api/sync/route'; export * as auth from './app/api/auth/route'; export * as files from './app/api/files/[id]/route'; export * as push from './app/api/push/route'; export * as dispatch from './app/api/reminders/route'; export * as watchPair from './app/api/watch/pair/route'; export * as watch from './app/api/watch/route';",
         resolveDir: process.cwd(),
       },
       outfile: output,
@@ -599,6 +599,99 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       ).status,
       409,
     );
+    const pairingRequest = (action: string, extra: object = {}) =>
+      new Request('https://stride.test/api/watch/pair', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://stride.test',
+          Cookie: 'stride_access=valid-alice',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ action, ...extra }),
+      });
+    let pairing = await api.watchPair.POST(pairingRequest('create'));
+    assert.equal(pairing.status, 200);
+    const pairingData = (await pairing.json()) as { code: string };
+    assert.match(pairingData.code, /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/);
+    const redeem = () =>
+      api.watchPair.POST(
+        new Request('https://stride.test/api/watch/pair', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'redeem', code: pairingData.code }),
+        }),
+      );
+    const redemptions = await Promise.all([redeem(), redeem()]);
+    assert.deepEqual(
+      redemptions
+        .map((response: Response) => response.status)
+        .sort((left: number, right: number) => left - right),
+      [200, 401],
+      'only one concurrent redemption succeeds',
+    );
+    pairing = redemptions.find(
+      (response: Response) => response.status === 200,
+    )!;
+    const watchToken = ((await pairing.json()) as { token: string }).token;
+    assert.match(watchToken, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal((await redeem()).status, 401, 'pairing code remains spent');
+    const watchRequest = (method = 'GET', value?: object, token = watchToken) =>
+      new Request('https://stride.test/api/watch', {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(value ? { 'Content-Type': 'application/json' } : {}),
+        },
+        ...(value ? { body: JSON.stringify(value) } : {}),
+      });
+    assert.equal(
+      (await api.watch.GET(watchRequest('GET', undefined, 'x'.repeat(43))))
+        .status,
+      401,
+    );
+    let watchResponse = await api.watch.GET(watchRequest());
+    assert.equal(watchResponse.status, 200);
+    assert.ok(
+      ((await watchResponse.json()) as { tasks: { id: string }[] }).tasks.some(
+        (task) => task.id === 'test-task',
+      ),
+    );
+    watchResponse = await api.watch.POST(
+      watchRequest('POST', { action: 'completeTask', taskId: 'test-task' }),
+    );
+    assert.equal(watchResponse.status, 200);
+    assert.equal(
+      ((await watchResponse.json()) as { tasks: { id: string }[] }).tasks.some(
+        (task) => task.id === 'test-task',
+      ),
+      false,
+    );
+    watchResponse = await api.watch.POST(
+      watchRequest('POST', {
+        action: 'createTask',
+        title: 'Captured on Watch',
+      }),
+    );
+    assert.equal(watchResponse.status, 200);
+    assert.ok(
+      (
+        (await watchResponse.json()) as { tasks: { title: string }[] }
+      ).tasks.some((task) => task.title === 'Captured on Watch'),
+    );
+    watchResponse = await api.watch.POST(
+      watchRequest('POST', { action: 'startTimer', minutes: 25 }),
+    );
+    assert.equal(watchResponse.status, 200);
+    assert.equal(
+      ((await watchResponse.json()) as { timer: { running: boolean } }).timer
+        .running,
+      true,
+    );
+    assert.equal(
+      (await api.watchPair.POST(pairingRequest('revoke'))).status,
+      200,
+    );
+    assert.equal((await api.watch.GET(watchRequest())).status, 401);
     await closeStorage();
   } finally {
     globalThis.fetch = originalFetch;

@@ -11,6 +11,7 @@ import {
   Sparkles,
   Bell,
   Trash2,
+  Watch,
 } from 'lucide-react';
 import { useStride } from '@/lib/stride/store';
 import {
@@ -111,6 +112,10 @@ export default function Settings() {
     Awaited<ReturnType<typeof listRecovery>>
   >([]);
   const [confirmedRestore, setConfirmedRestore] = useState(false);
+  const [watchPairing, setWatchPairing] = useState<{
+    code: string;
+    expires: string;
+  } | null>(null);
   const [model, setModel] = useState(store.settings.model);
   const [name, setName] = useState(store.settings.name);
   const deleted = store.snapshot
@@ -253,6 +258,7 @@ export default function Settings() {
             ['navigation', 'Navigation', SettingsIcon],
             ['account', 'Account & sync', Cloud],
             ['notifications', 'Notifications', Bell],
+            ['watch', 'Apple Watch', Watch],
             ['ai', 'Gemini input', Sparkles],
             ['backup', 'Backup & restore', Download],
             ['data', 'Storage & recovery', Shield],
@@ -725,6 +731,102 @@ export default function Settings() {
                   without these services.
                 </p>
               )}
+            </>
+          )}
+          {tab === 'watch' && (
+            <>
+              <h2>Apple Watch</h2>
+              <p className="muted">
+                Pair the native companion to see upcoming tasks, complete work,
+                log today’s habits, add a task and control a focus timer. The
+                watch syncs through your Stride account, so this requires a
+                signed-in account and a publicly reachable production origin.
+              </p>
+              {!store.account.user && (
+                <div className="inset-panel">
+                  <h3>Sign in before pairing</h3>
+                  <p className="muted">
+                    Pairing links the watch to the currently signed-in Stride
+                    workspace. Local guest data never leaves this browser.
+                  </p>
+                </div>
+              )}
+              {watchPairing && (
+                <output className="watch-pairing">
+                  <span>PAIRING CODE</span>
+                  <strong>{watchPairing.code}</strong>
+                  <p>
+                    Enter this code in Stride on Apple Watch before{' '}
+                    {new Date(watchPairing.expires).toLocaleTimeString([], {
+                      hour: 'numeric',
+                      minute: '2-digit',
+                    })}
+                    . It can be used once.
+                  </p>
+                </output>
+              )}
+              <div className="form-actions">
+                <button
+                  className="primary-button"
+                  disabled={busy || !store.account.user}
+                  onClick={() =>
+                    void action(async () => {
+                      const response = await fetch('/api/watch/pair', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'create' }),
+                      });
+                      const data = (await response.json()) as {
+                        code?: string;
+                        expires?: string;
+                        error?: string;
+                      };
+                      if (!response.ok || !data.code || !data.expires)
+                        throw new Error(
+                          data.error || 'Pairing is unavailable.',
+                        );
+                      setWatchPairing({
+                        code: data.code,
+                        expires: data.expires,
+                      });
+                      setMessage('Pairing code ready for ten minutes.');
+                    })
+                  }
+                >
+                  Generate pairing code
+                </button>
+                <button
+                  className="secondary-button"
+                  disabled={busy || !store.account.user}
+                  onClick={() =>
+                    void action(async () => {
+                      const response = await fetch('/api/watch/pair', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'revoke' }),
+                      });
+                      const data = (await response.json()) as {
+                        error?: string;
+                      };
+                      if (!response.ok)
+                        throw new Error(
+                          data.error || 'Could not disconnect watches.',
+                        );
+                      setWatchPairing(null);
+                      setMessage('All Apple Watch connections were revoked.');
+                    })
+                  }
+                >
+                  Disconnect all watches
+                </button>
+              </div>
+              <p className="muted">
+                Codes expire after ten minutes. Watch access tokens are kept in
+                the watch Keychain, expire after one year, and can be revoked
+                here at any time. A private Sites access gate blocks native
+                watch traffic; use this after the production origin is opened to
+                your intended audience.
+              </p>
             </>
           )}
           {tab === 'ai' && (

@@ -58,3 +58,11 @@ Restore validates the complete file in staging, previews its contents, preserves
 The scheduler authenticates with HMAC-SHA256 over timestamp, nonce, and body. Dispatch rejects stale or repeated nonces. Due jobs are transactionally claimed with leases, bounded retry, quiet hours, stale-job expiry, completion cancellation, and at most 12 repeated attempts. Successful delivery is recorded per subscription and round to avoid resending to a successful device when another device fails.
 
 Delivery to an OS is not exactly-once: a crash between push acceptance and recording its receipt can still duplicate a notification, and the OS can delay or suppress it. Notification tags reduce duplicate visible entries. Scheduling intent survives an interrupted sync request. Production keys, subscriptions, deployment, and real-device delivery have not been validated.
+
+## Apple Watch companion
+
+The independent watchOS companion in `apple/StrideWatch` pairs through an eight-character, ten-minute, one-use code created by an authenticated browser. Pair codes and one-year device tokens are stored in D1 only as SHA-256 hashes; the raw device token is returned once and retained in the watch Keychain. Revocation removes every watch credential for the signed-in owner.
+
+`/api/watch` exposes a bounded, owner-scoped snapshot of upcoming tasks, today's habits and the active focus timer. Watch mutations use the same validated field/change protocol as browser edits, including task dependency and recurrence behavior, deterministic habit logs, reminder rescheduling, and browser sync history. Native timer completion also schedules a local watch notification when permission is granted.
+
+The current private Sites access gate intentionally blocks unauthenticated native traffic before it reaches the app. Pairing therefore becomes operational only on a production origin reachable by the intended audience. Xcode compilation, signing, distribution, background behavior and physical-device testing remain acceptance requirements.

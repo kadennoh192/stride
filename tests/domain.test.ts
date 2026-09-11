@@ -10,10 +10,21 @@ import {
   embedURL,
 } from '../lib/stride/domain';
 import { formula } from '../lib/stride/formula';
+import { habitLogId } from '../lib/stride/habits';
 const task = (extra: Record<string, unknown>): Task => ({
   id: 'task-1',
   kind: 'task',
   data: taskData('Test', extra),
+});
+void test('habit log identities stay compatible and bounded', async () => {
+  assert.equal(
+    await habitLogId('habit-id', '2026-09-08'),
+    'habitlog-habit-id-2026-09-08',
+  );
+  const bounded = await habitLogId('x'.repeat(150), '2026-09-08');
+  assert.match(bounded, /^habitlog-[a-f0-9]{40}$/);
+  assert.ok(bounded.length <= 150);
+  assert.equal(bounded, await habitLogId('x'.repeat(150), '2026-09-08'));
 });
 void test('recurrence preserves month-end anchor and handles weekdays', () => {
   assert.equal(

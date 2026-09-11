@@ -6,14 +6,14 @@ Keep this preview owner-private while completing acceptance. Independent account
 
 Set runtime values through Sites environment configuration, never in `.openai/hosting.json` or the repository:
 
-| Variable | Purpose |
-| --- | --- |
-| `SUPABASE_URL` | Supabase project HTTPS origin |
-| `SUPABASE_ANON_KEY` | Supabase client/anonymous key for Auth REST calls; never a service-role key |
-| `VAPID_PUBLIC_KEY` | Web Push public application-server key |
-| `VAPID_PRIVATE_KEY` | Secret matching private key |
-| `VAPID_SUBJECT` | VAPID contact URI |
-| `REMINDER_DISPATCH_SECRET` | High-entropy secret shared only with the scheduled Worker |
+| Variable                   | Purpose                                                                     |
+| -------------------------- | --------------------------------------------------------------------------- |
+| `SUPABASE_URL`             | Supabase project HTTPS origin                                               |
+| `SUPABASE_ANON_KEY`        | Supabase client/anonymous key for Auth REST calls; never a service-role key |
+| `VAPID_PUBLIC_KEY`         | Web Push public application-server key                                      |
+| `VAPID_PRIVATE_KEY`        | Secret matching private key                                                 |
+| `VAPID_SUBJECT`            | VAPID contact URI                                                           |
+| `REMINDER_DISPATCH_SECRET` | High-entropy secret shared only with the scheduled Worker                   |
 
 D1 binding `DB` and R2 binding `FILES` are declared in the existing Sites hosting manifest. Apply the additive migrations in `drizzle/` in order. The original migrations are preserved. Do not clear cloud tables during rollout.
 
@@ -26,13 +26,17 @@ Configure the production Site URL, allowlisted callback origin, verification, an
 Confirmation template link:
 
 ```html
-<a href="{{ .SiteURL }}/?token_hash={{ .TokenHash }}&type=email">Confirm email</a>
+<a href="{{ .SiteURL }}/?token_hash={{ .TokenHash }}&type=email"
+  >Confirm email</a
+>
 ```
 
 Recovery template link:
 
 ```html
-<a href="{{ .SiteURL }}/?token_hash={{ .TokenHash }}&type=recovery">Reset password</a>
+<a href="{{ .SiteURL }}/?token_hash={{ .TokenHash }}&type=recovery"
+  >Reset password</a
+>
 ```
 
 Use the intended environment's Site URL. Test verification and recovery from the delivered emails before release, including expired links and email security scanners. Follow Supabase's [email template guidance](https://supabase.com/docs/guides/auth/auth-email-templates) and [redirect URL configuration](https://supabase.com/docs/guides/auth/redirect-urls).
@@ -46,6 +50,12 @@ Deploy `workers/reminders/wrangler.jsonc` separately to Cloudflare Workers. Set 
 The scheduled trigger runs once per minute and calls `/api/reminders` with a signed request. Verify the callback can reach the application through its access gate. Configure alerts for dispatch failures and job backlog, using counts and IDs without task titles, descriptions, email contents, API keys, or push payloads.
 
 Enable notifications from Settings on each device. On iPhone, Web Push requires a supported Home Screen web app; see [Apple's Web Push documentation](https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers). Do not promise closed-app offline alarms or guaranteed OS delivery.
+
+## Apple Watch
+
+The independent watchOS app reads `STRIDE_API_ORIGIN` from its Info.plist. Set it to the final HTTPS application origin before signing. A private Sites access gate rejects the watch's bearer-token requests before they reach `/api/watch`, so native pairing must remain a development-only control until that origin is reachable by the intended account audience. Do not embed a Sites bypass token, Supabase credential, or watch bearer token in the app bundle.
+
+Generate the Xcode project from `apple/StrideWatch/project.yml`, select the release signing team and bundle identifier, and validate on both a watchOS 10+ simulator and physical Watch. Pairing requires a configured Stride account. Revoke test tokens in Settings after acceptance.
 
 ## Rollout gate
 
