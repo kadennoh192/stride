@@ -5,6 +5,7 @@ import {
   applyEdits,
   indexedRecordPage,
   startupProjection,
+  searchRecords,
   closeStorage,
 } from '../lib/stride/storage';
 import { taskData } from '../lib/stride/types';
@@ -61,6 +62,10 @@ const startupReadStart = performance.now();
 const startup = await startupProjection(owner);
 const startupReadMs = performance.now() - startupReadStart;
 console.log(`Measured startup projection (${startup.length} records)`);
+const searchStart = performance.now();
+const search = await searchRecords(owner, `Task ${taskCount - 1}`);
+const searchMs = performance.now() - searchStart;
+console.log(`Measured indexed search (${search.length} records)`);
 const samples: number[] = [];
 for (let n = 0; n < sampleCount; n++) {
   const start = performance.now();
@@ -96,6 +101,8 @@ console.log(
       pageSize: page.length,
       startupProjectionMs: startupReadMs,
       startupProjectionSize: startup.length,
+      indexedSearchMs: searchMs,
+      indexedSearchSize: search.length,
     },
     null,
     2,

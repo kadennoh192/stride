@@ -36,6 +36,7 @@ import {
   addStarter,
   allFiles,
   startupProjection,
+  searchRecords,
 } from './storage';
 import { uploadFile } from './upload';
 import { completionEdits } from './completion';
@@ -55,6 +56,7 @@ interface Store {
   snapshot: Snapshot | null;
   account: Account;
   owner: string;
+  search: (query: string, limit?: number) => Promise<Entity[]>;
   notice: (s: string) => void;
   edit: (edits: Edit[], label?: string) => Promise<void>;
   add: <K extends Kind>(
@@ -587,6 +589,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           : 'Task completed',
       );
   };
+  const search = useCallback(
+    (query: string, limit = 50) =>
+      owner ? searchRecords(owner, query, limit) : Promise.resolve([]),
+    [owner],
+  );
   return (
     <Context.Provider
       value={{
@@ -602,6 +609,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         snapshot: fullSnapshot,
         account,
         owner,
+        search,
         notice,
         edit,
         add: async (kind, data, label) => {
