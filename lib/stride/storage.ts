@@ -17,7 +17,7 @@ import {
   taskData,
 } from './types';
 import { validateEntity, validateGraph, validField } from './validation';
-export const VERSION = 3;
+export const VERSION = 4;
 export const SNAPSHOT_VERSION = 2;
 export interface Snapshot {
   version: number;
@@ -128,6 +128,42 @@ export function openDB() {
         records.createIndex('container', ['owner', 'kind', 'container']);
       if (!records.indexNames.contains('due'))
         records.createIndex('due', ['owner', 'kind', 'due']);
+      if (!records.indexNames.contains('ownerKindActive'))
+        records.createIndex('ownerKindActive', ['owner', 'kind', 'active']);
+      if (!records.indexNames.contains('containerActive'))
+        records.createIndex('containerActive', [
+          'owner',
+          'kind',
+          'container',
+          'active',
+        ]);
+      if (!records.indexNames.contains('ownerKindActiveId'))
+        records.createIndex('ownerKindActiveId', [
+          'owner',
+          'kind',
+          'active',
+          'id',
+        ]);
+      if (!records.indexNames.contains('containerActiveId'))
+        records.createIndex('containerActiveId', [
+          'owner',
+          'kind',
+          'container',
+          'active',
+          'id',
+        ]);
+      if (event.oldVersion > 0 && event.oldVersion < 4) {
+        const existingRecords = records.openCursor();
+        existingRecords.onsuccess = () => {
+          const cursor = existingRecords.result;
+          if (!cursor) return;
+          cursor.update({
+            ...cursor.value,
+            active: cursor.value.deleted ? 0 : 1,
+          });
+          cursor.continue();
+        };
+      }
       const migrate = (source: Snapshot, owner: string) => {
         const snapshot = {
           ...source,
@@ -237,6 +273,7 @@ function indexedRecord(owner: string, e: Entity) {
   return {
     ...e,
     owner,
+    active: e.deleted ? 0 : 1,
     container: stringValue(
       e.data.database || e.data.page || e.data.project || '',
     ),
@@ -306,14 +343,7 @@ function getSnapshot(
     };
   };
 }
-const CORE_STORES = [
-  'meta',
-  'fields',
-  'operations',
-  'conflicts',
-  'records',
-  'recovery',
-];
+const CORE_STORES = ['meta', 'fields', 'operations', 'conflicts', 'records'];
 export async function transact(
   fn: (s: Snapshot) => void,
   owner = 'guest',
@@ -322,8 +352,11 @@ export async function transact(
 ): Promise<Snapshot> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const stores =
-      recover || files ? [...CORE_STORES, 'files', 'fileQueue'] : CORE_STORES;
+    const stores = [
+      ...CORE_STORES,
+      ...(recover ? ['recovery'] : []),
+      ...(recover || files ? ['files', 'fileQueue'] : []),
+    ];
     const tx = db.transaction(stores, 'readwrite');
     let result: Snapshot,
       revision = 0,
@@ -367,21 +400,43 @@ export async function transact(
           if (record)
             tx.objectStore('records').put(indexedRecord(owner, record));
         }
-        const oldHistory = new Map(snapshot.history.map((c) => [c.id, c]));
         const oldPending = new Set(snapshot.outbox.map((c) => c.id));
         const pending = new Set(result.outbox.map((c) => c.id));
-        for (const [sequence, c] of result.history.entries())
-          if (
-            !oldHistory.has(c.id) ||
-            oldPending.has(c.id) !== pending.has(c.id)
-          )
-            tx.objectStore('operations').put({
-              owner,
-              id: c.id,
-              change: c,
-              pending: pending.has(c.id) ? 1 : 0,
-              sequence,
-            });
+        const operations = tx.objectStore('operations');
+        const appendOnly =
+          result.history.length >= snapshot.history.length &&
+          snapshot.history.every(
+            (change, sequence) => result.history[sequence]?.id === change.id,
+          );
+        if (!appendOnly)
+          throw new Error('Activity history cannot be rewritten in place.');
+        for (
+          let sequence = snapshot.history.length;
+          sequence < result.history.length;
+          sequence++
+        ) {
+          const change = result.history[sequence];
+          operations.put({
+            owner,
+            id: change.id,
+            change,
+            pending: pending.has(change.id) ? 1 : 0,
+            sequence,
+          });
+        }
+        const acknowledged = [...oldPending].filter((id) => !pending.has(id));
+        if (acknowledged.length) {
+          const acknowledgedIds = new Set(acknowledged);
+          for (const [sequence, change] of snapshot.history.entries())
+            if (acknowledgedIds.has(change.id))
+              operations.put({
+                owner,
+                id: change.id,
+                change,
+                pending: 0,
+                sequence,
+              });
+        }
         const conflicts = new Set(result.conflicts.map((c) => c.id));
         const oldConflicts = new Set(snapshot.conflicts.map((c) => c.id));
         for (const c of result.conflicts)
@@ -441,31 +496,74 @@ export async function indexedRecords(
     const records = db.transaction('records').objectStore('records');
     const source =
       container === undefined
-        ? records.index('ownerKind')
-        : records.index('container');
+        ? records.index('ownerKindActive')
+        : records.index('containerActive');
     const key =
-      container === undefined ? [owner, kind] : [owner, kind, container];
+      container === undefined ? [owner, kind, 1] : [owner, kind, container, 1];
     const request = source.openCursor(IDBKeyRange.only(key));
     const result: Entity[] = [];
-    let skipped = 0;
+    let advanced = offset === 0;
     request.onsuccess = () => {
       const c = request.result;
       if (!c || result.length >= limit) {
         resolve(result);
         return;
       }
-      if (!c.value.deleted) {
-        if (skipped++ >= offset) {
-          const {
-            owner: _owner,
-            container: _container,
-            due: _due,
-            ...entity
-          } = c.value;
-          result.push(entity);
-        }
+      if (!advanced) {
+        advanced = true;
+        c.advance(offset);
+        return;
       }
+      const {
+        owner: _owner,
+        container: _container,
+        due: _due,
+        active: _active,
+        ...entity
+      } = c.value;
+      result.push(entity);
       c.continue();
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+export async function indexedRecordPage(
+  owner: string,
+  kind: Kind,
+  container?: string,
+  limit = 100,
+  afterId = '',
+): Promise<Entity[]> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const records = db.transaction('records').objectStore('records');
+    const source =
+      container === undefined
+        ? records.index('ownerKindActiveId')
+        : records.index('containerActiveId');
+    const prefix =
+      container === undefined ? [owner, kind, 1] : [owner, kind, container, 1];
+    const lower = [...prefix, afterId];
+    const upper = [...prefix, '\uffff'];
+    const request = source.openCursor(
+      IDBKeyRange.bound(lower, upper, afterId !== '', false),
+    );
+    const result: Entity[] = [];
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor || result.length >= limit) {
+        resolve(result);
+        return;
+      }
+      const {
+        owner: _owner,
+        container: _container,
+        due: _due,
+        active: _active,
+        ...entity
+      } = cursor.value;
+      result.push(entity);
+      cursor.continue();
     };
     request.onerror = () => reject(request.error);
   });
@@ -591,10 +689,10 @@ export function applyEdits(s: Snapshot, edits: Edit[], label: string) {
     const prior = combined.get(edit.id);
     if (prior && prior.kind !== edit.kind)
       throw new Error('Record type cannot change');
-    combined.set(
-      edit.id,
-      { ...edit, data: { ...prior?.data, ...edit.data } } as Edit,
-    );
+    combined.set(edit.id, {
+      ...edit,
+      data: { ...prior?.data, ...edit.data },
+    } as Edit);
   }
   edits = [...combined.values()];
   const existing = new Map(
@@ -776,8 +874,7 @@ export async function restoreSnapshot(
       const edits: Edit[] = materialize(current.fields, true)
         .filter((e) => !importedIds.has(e.id))
         .map(
-          (e) =>
-            ({ id: e.id, kind: e.kind, data: { _deleted: true } }) as Edit,
+          (e) => ({ id: e.id, kind: e.kind, data: { _deleted: true } }) as Edit,
         );
       for (const e of imported) {
         const previous = entityFromFields(current.fields, e.id);

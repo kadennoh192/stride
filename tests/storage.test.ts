@@ -159,10 +159,7 @@ void test('complete backups round-trip records and bytes; corruption is rejected
   assert.equal(archived.records, 2);
   assert.equal(await archived.files[0].blob.text(), 'original attachment');
   assert.ok(archive.code.startsWith('STRIDE2.'));
-  assert.equal(
-    (await stageBackupFile(new Blob([exported.json]))).records,
-    2,
-  );
+  assert.equal((await stageBackupFile(new Blob([exported.json]))).records, 2);
   const corrupted = new Uint8Array(await archive.blob.arrayBuffer());
   corrupted[80] ^= 1;
   await assert.rejects(
@@ -275,6 +272,33 @@ void test('restart preserves causal outbox order, acknowledgments, and indexed r
   assert.deepEqual(
     (await load(owner)).outbox.map((c) => c.id),
     [ids[1]],
+  );
+});
+
+void test('keyset record pages skip tombstones without scanning prior records', async () => {
+  const { indexedRecordPage } = await import('../lib/stride/storage');
+  const owner = 'keyset-pages';
+  await transact((state) => {
+    applyEdits(
+      state,
+      ['a', 'b', 'c', 'd', 'e'].map((suffix) => ({
+        id: `task-${suffix}`,
+        kind: 'task' as const,
+        data: taskData(`Task ${suffix}`, { project: 'project-a' }),
+      })),
+      'Create page fixture',
+    );
+    applyEdits(
+      state,
+      [{ id: 'task-b', kind: 'task', data: { _deleted: true } }],
+      'Delete fixture record',
+    );
+  }, owner);
+  assert.deepEqual(
+    (await indexedRecordPage(owner, 'task', 'project-a', 2, 'task-a')).map(
+      (record) => record.id,
+    ),
+    ['task-c', 'task-d'],
   );
 });
 

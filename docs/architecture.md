@@ -13,15 +13,15 @@
 
 ## Local storage contract
 
-The IndexedDB database `stride-workspace` is schema version 3. Portable snapshots and the sync/export protocol remain version 2; those versions are independent.
+The IndexedDB database `stride-workspace` is schema version 4. Portable snapshots and the sync/export protocol remain version 2; those versions are independent. Schema 4 adds tombstone-safe active-record indexes and ID-inclusive keyset indexes; upgrades backfill the derived active flag without rewriting canonical fields or operation history.
 
 `meta` contains owner identity, logical clock, sync cursor, and a revision used to invalidate caches across tabs. `fields`, `records`, `operations`, and `conflicts` are indexed by owner. Records also have kind, container, and due-date indexes. Files, the outgoing attachment queue, and recovery snapshots have separate stores.
 
 Every edit validates first, then commits changed fields, materialized records, activity, and outgoing operations in one read-write transaction. React is notified after completion. Aborted or quota-failed transactions leave both the entity and operation uncommitted. Drafts overlay a field index and commit only changed fields; a one-field edit does not rewrite the serialized workspace.
 
-Version-one data migrates to unclaimed guest storage. Version-two snapshots migrate to indexed owner stores. The old stores remain intact and a recovery snapshot is retained. Legacy attachment bytes remain available. A blocked migration asks the user to close older tabs rather than deleting data.
+Version-one data migrates to unclaimed guest storage. Version-two snapshots migrate to indexed owner stores. Version-three record indexes are backfilled in place for keyset paging. The old stores remain intact and a recovery snapshot is retained. Legacy attachment bytes remain available. A blocked migration asks the user to close older tabs rather than deleting data.
 
-The current UI still loads a complete owner snapshot, including database rows and history. Indexed pagination exists in storage, but full lazy workspace loading and large-dataset UI performance remain release work.
+The current UI still loads a complete owner snapshot, including database rows and history. Storage exposes tombstone-safe keyset pagination that seeks from a stable record ID without walking earlier rows. Moving the database UI and initial workspace load fully onto paged queries remains release work.
 
 ## Sync protocol
 

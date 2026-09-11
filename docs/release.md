@@ -12,14 +12,14 @@ Production builds have succeeded during implementation. The build finalizer prec
 
 Browser control was unavailable in the most recent environment (no browser surfaces; in-app browser creation returned unavailable). Earlier browser work exercised task creation and search, but did not prove the final responsive layouts, editor workflows, or PWA behavior. Do not represent browser or real-device gates as passed.
 
-A 60,000-record synthetic IndexedDB fixture was loaded during a diagnostic. The environment reset before final timing output was captured. No responsive-interaction claim follows from that run. Reference-device measurements remain required.
+A 60,000-record synthetic IndexedDB fixture (10,000 tasks and 50,000 database rows) completed in the Node `fake-indexeddb` diagnostic. Setup took 83.3 seconds, a 100-row deep keyset page took 54.5 ms, and one small edit took 4.06 seconds. These figures identify storage paths but do not model a browser's IndexedDB implementation or rendering, so no responsive-interaction claim follows from them. Reference-device p50/p95 measurements remain required.
 
 ## Requirement tracking
 
 | Requirement | Current implementation/evidence | Remaining acceptance |
 | --- | --- | --- |
 | Modular, strongly typed domain | Feature modules, domain functions, a complete kind-discriminated entity/edit API, and per-kind runtime validators | Keep compile-time and import-validation coverage aligned as new record kinds are added |
-| Versioned indexed storage | Schema 3, owner/record/field/operation indexes; migration and failure tests | Multi-tab browser migration/blocked-upgrade test; long offline datasets |
+| Versioned indexed storage | Schema 4, owner/record/field/operation indexes, tombstone-safe active indexes, keyset indexes, and v1-v3 migration/failure tests | Multi-tab browser migration/blocked-upgrade test; long offline datasets |
 | Atomic edits and outgoing operations | One transaction; injected abort/quota tests | Real browser quota/eviction test |
 | D1 durability and R2 integrity | Owner authorization and D1/R2 integration tests | Verify actual cloud records, reconnect, and cloud backup |
 | Attachment queues | Resumable 1 MB chunks, persisted progress, remote hash reconciliation; local R2 interruption/restart, corrupt-part repair, empty-file and owner-switch checks | Browser/network interruption, long-offline resume and staging-cleanup acceptance |
@@ -56,7 +56,7 @@ A 60,000-record synthetic IndexedDB fixture was loaded during a diagnostic. The 
 | Customization | Theme modes/presets/accent, density, typography, nav order/visibility, backgrounds | Full custom theme controls, placement coverage, persisted layout preferences and contrast validation |
 | Complete backup/restore | Stream-friendly version-three archive with checksummed metadata and per-file hashes; compact code/JSON compatibility; staged validation and atomic recovery tests | Real-browser archive round-trip above 100 MB; full content matrix round-trip |
 | Accessibility | Semantic controls, focus drawer, reduced motion, chart data alternatives | Screen readers, 200% zoom, contrast, keyboard-only and touch walkthroughs |
-| Performance | Incremental persisted fields, indexed records, pagination, lazy editors | Replace full-snapshot startup where needed; 10k tasks/50k rows and sub-100ms reference-device interactions |
+| Performance | Incremental field/operation writes, active-record and ID-keyset indexes, bounded pages, lazy editors; 10k-task/50k-row simulator diagnostic completed | Move UI/startup from full snapshots to paged reads; measure 10k tasks/50k rows and sub-100ms p50/p95 interactions on reference devices |
 | Staged release/monitoring | Additive migrations, deployment instructions, private audience preserved | Cloud backup/rollback exercise, final preview, operational metrics and alert delivery |
 | Apple Watch | Explicitly deferred, no simulated feature | After web acceptance: native companion, signing, sync bridge and physical Watch testing |
 
