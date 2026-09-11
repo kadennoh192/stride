@@ -346,6 +346,19 @@ function SchemaEditor({
   const [date, setDate] = useState(database.data.dateProperty || '');
   const update = (id: string, patch: Partial<Property>) =>
     setProps(props.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+  const changeType = (property: Property, type: PropertyType) => {
+    const next = { ...property, type };
+    if (type !== 'relation') delete next.target;
+    if (type !== 'formula') delete next.expression;
+    if (type !== 'rollup') {
+      delete next.relation;
+      delete next.property;
+      delete next.aggregate;
+    }
+    setProps(
+      props.map((candidate) => (candidate.id === next.id ? next : candidate)),
+    );
+  };
   return (
     <Modal title="Database settings" open onClose={onClose} wide>
       <Field label="Database name">
@@ -375,9 +388,7 @@ function SchemaEditor({
             <Field label="Type">
               <Select
                 value={p.type}
-                onChange={(type) =>
-                  update(p.id, { type: type as PropertyType })
-                }
+                onChange={(type) => changeType(p, type as PropertyType)}
                 options={propertyTypes}
               />
             </Field>
@@ -1107,9 +1118,7 @@ export function DatabaseSurface({
             const title =
               typeof row.title === 'string' ? row.title : 'Untitled entry';
             const values =
-              row.values && typeof row.values === 'object'
-                ? row.values
-                : {};
+              row.values && typeof row.values === 'object' ? row.values : {};
             return (
               <button
                 className="secondary-button"

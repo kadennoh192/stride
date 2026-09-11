@@ -6,6 +6,8 @@ import type {
   Entity,
   EntityCandidate,
   Conflict,
+  Property,
+  DatabaseRow,
 } from './types';
 import { validZone, validDate, safeURL, embedURL } from './domain';
 export const kinds: Kind[] = [
@@ -297,6 +299,7 @@ function validateShape(e: EntityCandidate) {
     case 'database': {
       if (!Array.isArray(d.properties)) invalid('Invalid database properties');
       const seen = new Set<string>();
+      const names = new Set<string>();
       for (const p of d.properties as unknown[]) {
         if (
           !object(p) ||
@@ -306,8 +309,11 @@ function validateShape(e: EntityCandidate) {
           seen.has(p.id) ||
           typeof p.name !== 'string' ||
           !p.name.trim() ||
+          names.has(p.name) ||
           !properties.includes(String(p.type)) ||
-          !strings(p.options)
+          !strings(p.options) ||
+          new Set(p.options).size !== p.options.length ||
+          p.options.some((option) => !option.trim() || option.length > 500)
         )
           invalid('Invalid or duplicate database property');
         optional(
@@ -326,11 +332,31 @@ function validateShape(e: EntityCandidate) {
           ['count', 'sum', 'average', 'min', 'max'].includes(String(v)),
         );
         seen.add((p as { id: string }).id);
+        names.add((p as { name: string }).name);
+      }
+      const byId = new Map(
+        (d.properties as Property[]).map((property) => [property.id, property]),
+      );
+      for (const property of d.properties as Property[]) {
+        if (
+          property.type !== 'relation' &&
+          property.target !== undefined &&
+          property.target !== ''
+        )
+          invalid('Only relation properties can declare a target');
+        if (
+          property.type === 'rollup' &&
+          property.relation &&
+          byId.get(property.relation)?.type !== 'relation'
+        )
+          invalid('A rollup must use a relation property');
       }
       optional(
         d,
         'dateProperty',
-        (v) => typeof v === 'string' && (!v || seen.has(v)),
+        (v) =>
+          typeof v === 'string' &&
+          (!v || (seen.has(v) && byId.get(v)?.type === 'date')),
       );
       break;
     }
@@ -513,6 +539,101 @@ function validateShape(e: EntityCandidate) {
       break;
   }
 }
+
+function rowValues(row: DatabaseRow) {
+  const values = { ...row.data.values };
+  for (const [key, value] of Object.entries(row.data))
+    if (key.startsWith('cell_')) values[key.slice(5)] = value;
+  return values;
+}
+
+function validCell(
+  property: Property,
+  value: unknown,
+  lookup: (id: string) => Entity | undefined,
+) {
+  if (value === undefined || value === null || value === '') return true;
+  switch (property.type) {
+    case 'text':
+      return typeof value === 'string';
+    case 'number':
+      return typeof value === 'number' && Number.isFinite(value);
+    case 'select':
+    case 'status':
+      return typeof value === 'string' && property.options.includes(value);
+    case 'multi-select':
+      return (
+        strings(value) &&
+        new Set(value).size === value.length &&
+        value.every((option) => property.options.includes(option))
+      );
+    case 'date':
+      return typeof value === 'string' && validDate(value);
+    case 'checkbox':
+      return typeof value === 'boolean';
+    case 'url':
+      return typeof value === 'string' && !!safeURL(value);
+    case 'email':
+      return (
+        typeof value === 'string' &&
+        value.length <= 320 &&
+        /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+      );
+    case 'phone':
+      return typeof value === 'string' && value.length <= 100;
+    case 'files':
+      return (
+        Array.isArray(value) &&
+        value.length <= 100 &&
+        value.every(
+          (file) =>
+            object(file) &&
+            typeof file.id === 'string' &&
+            id.test(file.id) &&
+            typeof file.name === 'string' &&
+            file.name.length <= 1024,
+        )
+      );
+    case 'person':
+      return typeof value === 'string' && id.test(value);
+    case 'relation':
+      return (
+        strings(value) &&
+        new Set(value).size === value.length &&
+        value.every((reference) => {
+          if (!id.test(reference)) return false;
+          const target = lookup(reference);
+          if (!target) return false;
+          if (!property.target) return true;
+          if (['task', 'project', 'page'].includes(property.target))
+            return target.kind === property.target;
+          return (
+            target.kind === 'row' && target.data.database === property.target
+          );
+        })
+      );
+    case 'rollup':
+    case 'formula':
+      return true;
+  }
+}
+
+function validateRowSchema(
+  row: DatabaseRow,
+  lookup: (id: string) => Entity | undefined,
+) {
+  const database = lookup(row.data.database);
+  if (!database || database.deleted) return;
+  if (database.kind !== 'database')
+    invalid('Database rows must reference a database');
+  const values = rowValues(row);
+  for (const property of database.data.properties as Property[])
+    if (
+      Object.hasOwn(values, property.id) &&
+      !validCell(property, values[property.id], lookup)
+    )
+      invalid(`Invalid value for database property: ${property.name}`);
+}
 export function validConflict(v: unknown): v is Conflict {
   if (
     !object(v) ||
@@ -537,6 +658,9 @@ export function validateGraph(
   edited: Entity[],
   lookup: (id: string) => Entity | undefined,
 ) {
+  for (const entity of edited)
+    if (entity.kind === 'row' && !entity.deleted)
+      validateRowSchema(entity, lookup);
   for (const edge of ['parent', 'dependencies'] as const) {
     const done = new Set<string>();
     for (const root of edited) {

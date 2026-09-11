@@ -722,8 +722,22 @@ export function applyEdits(s: Snapshot, edits: Edit[], label: string) {
     validateEntity(next);
     existing.set(e.id, next as Entity);
   }
+  const graphRecords = [...existing.values()].filter(
+    (entity): entity is Entity => !!entity,
+  );
+  const changedDatabases = new Set(
+    edits.filter((edit) => edit.kind === 'database').map((edit) => edit.id),
+  );
+  if (changedDatabases.size)
+    for (const entity of entitiesFromFields(s.fields))
+      if (
+        entity.kind === 'row' &&
+        changedDatabases.has(entity.data.database) &&
+        !existing.has(entity.id)
+      )
+        graphRecords.push(entity);
   validateGraph(
-    [...existing.values()].filter((e): e is Entity => !!e),
+    graphRecords,
     (id) => existing.get(id) || entityFromFields(s.fields, id),
   );
   const revisions = new Map(
