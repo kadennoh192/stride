@@ -527,6 +527,40 @@ function validateShape(e: EntityCandidate) {
       );
       for (const key of ['quietStart', 'quietEnd'])
         optional(d, key, (v) => typeof v === 'string' && time.test(v));
+      optional(
+        d,
+        'taskViews',
+        (v) =>
+          object(v) &&
+          Object.entries(v).length <= 250 &&
+          Object.entries(v).every(
+            ([route, view]) =>
+              /^[a-zA-Z0-9/_-]{1,200}$/.test(route) &&
+              ['list', 'board', 'table', 'timeline'].includes(String(view)),
+          ),
+      );
+      optional(d, 'calendarView', (v) =>
+        [
+          'year',
+          'month',
+          'week',
+          'multi-week',
+          'multi-day',
+          'agenda',
+          'upcoming',
+          'today',
+          'list',
+          'board',
+          'table',
+          'timeline',
+        ].includes(String(v)),
+      );
+      optional(
+        d,
+        'calendarSpan',
+        (v) => finite(v, 2, 6) && Number.isInteger(v),
+      );
+      optional(d, 'calendarShowCompleted', (v) => typeof v === 'boolean');
       optional(d, 'activeTimer', (v) => {
         if (!object(v)) return false;
         const duration = Number(v.duration);

@@ -14,6 +14,8 @@ import {
   Sparkles,
   Archive,
   ArrowUpRight,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import { useStride } from '@/lib/stride/store';
 import { taskData, dateKey, type Task, type Project } from '@/lib/stride/types';
@@ -569,12 +571,15 @@ export function Tasks({
 }) {
   const store = useStride();
   const [query, setQuery] = useState('');
-  const [view, setView] = useState('list');
+  const [view, setView] = useState(store.settings.taskViews[route] || 'list');
   const [priority, setPriority] = useState('');
   const [tag, setTag] = useState('');
   const [projectFilter, setProjectFilter] = useState('');
   const [page, setPage] = useState(0);
   const [quick, setQuick] = useState('');
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
+    new Set(),
+  );
   const tasks = useMemo(
     () => store.entities.filter((e) => e.kind === 'task') as Task[],
     [store.entities],
@@ -631,6 +636,41 @@ export function Tasks({
   const completedToday = store.entities.filter(
     (e) => e.kind === 'completion' && stringValue(e.data.at).startsWith(today),
   ).length;
+  const pagedTasks = shown.slice(page * 100, page * 100 + 100);
+  const sectionGroups = useMemo(() => {
+    if (!project) return [];
+    const configured = project.data.sections;
+    const legacy = shown
+      .map((task) => task.data.section)
+      .filter((section) => section && !configured.includes(section));
+    const sections = [...configured, ...new Set(legacy)];
+    return [
+      ...sections.map((section) => ({
+        key: section,
+        title: section,
+        count: shown.filter((task) => task.data.section === section).length,
+        tasks: pagedTasks.filter((task) => task.data.section === section),
+      })),
+      {
+        key: '',
+        title: 'No section',
+        count: shown.filter((task) => !task.data.section).length,
+        tasks: pagedTasks.filter((task) => !task.data.section),
+      },
+    ].filter((group) => group.key || group.count > 0 || sections.length === 0);
+  }, [project, shown, pagedTasks]);
+  const moveToSection = (event: React.DragEvent, section: string) => {
+    event.preventDefault();
+    const id = event.dataTransfer.getData('text/stride-task');
+    const task = tasks.find(
+      (candidate) =>
+        candidate.id === id && candidate.data.project === project?.id,
+    );
+    if (task && task.data.section !== section)
+      void store
+        .update(task, { section }, `Moved task to ${section || 'No section'}`)
+        .then(() => store.notice(`Moved to ${section || 'No section'}`));
+  };
   return (
     <>
       <div className="page-heading">
@@ -674,7 +714,12 @@ export function Tasks({
               <button
                 className={`view-tab ${view === v ? 'active' : ''}`}
                 key={v}
-                onClick={() => setView(v)}
+                onClick={() => {
+                  setView(v);
+                  void store.setSettings({
+                    taskViews: { ...store.settings.taskViews, [route]: v },
+                  });
+                }}
               >
                 {v[0].toUpperCase() + v.slice(1)}
               </button>
@@ -793,10 +838,80 @@ export function Tasks({
                 >
                   Add a task when you’re ready.
                 </Empty>
+              ) : project ? (
+                <div className="project-sections">
+                  {sectionGroups.map((group) => {
+                    const collapsed = collapsedSections.has(group.key);
+                    return (
+                      <section
+                        className="task-section"
+                        key={group.key || 'unsectioned'}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={(event) => moveToSection(event, group.key)}
+                      >
+                        <div className="task-section-heading">
+                          <button
+                            className="section-toggle"
+                            aria-expanded={!collapsed}
+                            onClick={() =>
+                              setCollapsedSections((current) => {
+                                const next = new Set(current);
+                                if (next.has(group.key)) next.delete(group.key);
+                                else next.add(group.key);
+                                return next;
+                              })
+                            }
+                          >
+                            {collapsed ? (
+                              <ChevronRight size={16} />
+                            ) : (
+                              <ChevronDown size={16} />
+                            )}
+                            <strong>{group.title}</strong>
+                            <span>{group.count}</span>
+                          </button>
+                          <button
+                            className="icon-button"
+                            aria-label={`Add task to ${group.title}`}
+                            onClick={() =>
+                              onAdd({ project: project.id, section: group.key })
+                            }
+                          >
+                            <Plus size={16} />
+                          </button>
+                        </div>
+                        {!collapsed && (
+                          <div className="task-section-items">
+                            {group.tasks.map((task) => (
+                              <TaskRow
+                                key={task.id}
+                                task={task}
+                                onEdit={onEdit}
+                              />
+                            ))}
+                            {group.count === 0 && (
+                              <button
+                                className="empty-section"
+                                onClick={() =>
+                                  onAdd({
+                                    project: project.id,
+                                    section: group.key,
+                                  })
+                                }
+                              >
+                                Drop a task here or add the first one
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </section>
+                    );
+                  })}
+                </div>
               ) : (
-                shown
-                  .slice(page * 100, page * 100 + 100)
-                  .map((t) => <TaskRow key={t.id} task={t} onEdit={onEdit} />)
+                pagedTasks.map((t) => (
+                  <TaskRow key={t.id} task={t} onEdit={onEdit} />
+                ))
               )}
               {shown.length > 100 && (
                 <div className="pagination">

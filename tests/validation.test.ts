@@ -66,6 +66,11 @@ void test('runtime validation rejects malformed task, editor, schema, settings, 
     { dailyGoal: 0 },
     { model: '../invalid' },
     { taskPaneWidth: 10000 },
+    { taskViews: { today: 'gallery' } },
+    { taskViews: { '../unsafe': 'list' } },
+    { calendarView: 'decade' },
+    { calendarSpan: 10 },
+    { calendarShowCompleted: 'yes' },
     {
       activeTimer: {
         id: 'timer',
@@ -84,6 +89,19 @@ void test('runtime validation rejects malformed task, editor, schema, settings, 
     );
   assert.doesNotThrow(() =>
     validateEntity({ id: 'settings', kind: 'settings', data: defaults }),
+  );
+  assert.doesNotThrow(() =>
+    validateEntity({
+      id: 'settings',
+      kind: 'settings',
+      data: {
+        ...defaults,
+        taskViews: { today: 'list', 'project/project-id': 'board' },
+        calendarView: 'multi-week',
+        calendarSpan: 6,
+        calendarShowCompleted: true,
+      },
+    }),
   );
   assert.doesNotThrow(() =>
     validateEntity({
