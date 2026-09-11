@@ -6,7 +6,7 @@ import {
   serverEntity,
   sendPush,
 } from '@/lib/server/reminders';
-import { dateKey, shiftDate } from '@/lib/stride/types';
+import { dateKey, shiftDate, stringValue } from '@/lib/stride/types';
 import { zonedInstant } from '@/lib/stride/domain';
 import type { PushSubscription as WebSubscription } from '@block65/webcrypto-web-push';
 export async function POST(request: Request) {
@@ -71,7 +71,7 @@ export async function POST(request: Request) {
         continue;
       }
       const settings = await serverEntity(job.owner, 'settings');
-      const zone = String(
+      const zone = stringValue(
         entity.data.timezone || settings?.data.timezone || 'UTC',
       );
       const wall = new Intl.DateTimeFormat('en-GB', {
@@ -80,8 +80,8 @@ export async function POST(request: Request) {
         minute: '2-digit',
         hourCycle: 'h23',
       }).format(now);
-      const quietStart = String(settings?.data.quietStart || '22:00'),
-        quietEnd = String(settings?.data.quietEnd || '07:00');
+      const quietStart = stringValue(settings?.data.quietStart || '22:00'),
+        quietEnd = stringValue(settings?.data.quietEnd || '07:00');
       const quiet =
         quietStart !== quietEnd &&
         (quietStart < quietEnd
@@ -157,7 +157,7 @@ export async function POST(request: Request) {
               : '/#focus';
         const response = await sendPush(
           JSON.parse(sub.payload) as WebSubscription,
-          String(entity.data.title || 'Focus timer'),
+          stringValue(entity.data.title || 'Focus timer'),
           entity.kind === 'settings'
             ? 'Your interval is complete.'
             : entity.kind === 'habit'

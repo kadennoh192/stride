@@ -72,6 +72,39 @@ void test('runtime validation rejects malformed task, editor, schema, settings, 
       },
     }),
   );
+  for (const entity of [
+    {
+      id: 'comment',
+      kind: 'comment' as const,
+      data: { target: 'page', text: 'Note', at: 'not-a-date' },
+    },
+    {
+      id: 'view',
+      kind: 'view' as const,
+      data: { title: 'View', hidden: [3] },
+    },
+    {
+      id: 'template',
+      kind: 'template' as const,
+      data: { title: 'Template', type: 'unknown' },
+    },
+    {
+      id: 'favorite',
+      kind: 'favorite' as const,
+      data: { title: 'Favorite', tip: -1 },
+    },
+    {
+      id: 'session',
+      kind: 'session' as const,
+      data: {
+        at: new Date().toISOString(),
+        duration: 60,
+        phase: 'focus',
+        task: '../bad',
+      },
+    },
+  ])
+    assert.throws(() => validateEntity(entity));
 });
 void test('staged parent and dependency graphs reject indirect and same-transaction cycles', () => {
   const state = blank();

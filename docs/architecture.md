@@ -2,8 +2,8 @@
 
 ## Boundaries
 
-- `lib/stride/types.ts`: entity, task, page, database, habit, and settings types.
-- `lib/stride/validation.ts`: shared runtime validation for local edits, sync operations, and imports.
+- `lib/stride/types.ts`: a kind-discriminated entity union plus kind-specific creation and edit payloads for tasks, projects, pages, blocks, databases, habits, views, templates, and activity records.
+- `lib/stride/validation.ts`: shared runtime validation for local edits, sync operations, and imports, including per-kind shapes and safe link/embed boundaries.
 - `lib/stride/domain.ts`, `formula.ts`, `timer.ts`: scheduling, dates, safe URLs, expressions, and persistent timer transitions.
 - `lib/stride/storage.ts`, `field-index.ts`: versioned local persistence, field indexes, operations, recovery, and incremental entity materialization.
 - `lib/stride/store.tsx`: account lifecycle, UI subscriptions, sync retries, undo, and global timer completion.
@@ -35,9 +35,9 @@ Retry triggers include connectivity, foregrounding, queued edits, and a bounded 
 
 ## Attachments and backups
 
-Attachments use account-scoped R2 paths and SHA-256 verification. Files are saved locally before being uploaded; failed uploads remain queued. Downloads expose unavailable/offline states. Upload retry currently restarts an individual file, rather than resuming byte ranges. File size is limited to 10 MB.
+Attachments use account-scoped R2 paths and SHA-256 verification. Files are saved locally before being uploaded. Transfers stage 1 MB chunks in account-scoped R2 paths, persist confirmed progress locally, and reconcile remote chunk hashes before resuming. The server checks each chunk and the complete file before finalization, recognizes completion retries, and removes corrupted chunks so they can be repaired. Expired temporary chunks are cleaned in bounded, owner-scoped scans; durable objects are outside that prefix. Downloads expose unavailable/offline states. File size is limited to 10 MB. Upload acknowledgments and in-flight downloads cannot replace files written by a newer local restore. Explicit owner headers reject transfers after an account switch.
 
-Exports capture records and local attachment bytes from one read transaction. Missing cloud attachments are downloaded before export succeeds. JSON backups include records, settings, history, conflicts, templates, views, and bytes. The compressed export code is `STRIDE2.<sha256>.<base64url-gzip-json>`; the checksum detects corruption, not malicious authorship. Backups are not encrypted.
+Exports capture records and local attachment bytes from one read transaction. Missing cloud attachments are downloaded before export succeeds, including files referenced only by retained history, conflicts, deleted records, or page/database templates. Staging rejects missing historical bytes and contradictory entity types. JSON backups include records, settings, history, conflicts, templates, views, and bytes. The compressed export code is `STRIDE2.<sha256>.<base64url-gzip-json>`; the checksum detects corruption, not malicious authorship. Backups are not encrypted.
 
 Restore validates in staging, previews contents, preserves a pre-restore snapshot and original bytes, then commits atomically. Imported records become fresh local operations so restored state can sync. API keys, authentication cookies, and device push subscriptions are outside the export format. Current complete-export limits are 100 MB of attachments and 150 MB decoded JSON; larger-workspace streaming export remains required before claiming unrestricted complete recovery.
 

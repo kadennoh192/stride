@@ -382,3 +382,46 @@ void test('multiple edits to one field in a transaction save the final requested
   );
   assert.equal(materialize(state.fields)[0].data.title, 'Last');
 });
+
+void test('a late upload acknowledgment cannot overwrite a newer restored file', async () => {
+  const { acknowledgeFileTransfer, uploadProgress } =
+    await import('../lib/stride/storage');
+  const owner = 'upload-restore';
+  await saveFile('file', new Blob(['old bytes']), owner);
+  const original = (await getLocalFile('file', owner))!;
+  assert.equal(await acknowledgeFileTransfer(original, original.hash, 3), true);
+  await saveFile('file', new Blob(['new restored bytes']), owner);
+  assert.equal(
+    await acknowledgeFileTransfer(
+      original,
+      original.hash,
+      original.blob.size,
+      true,
+    ),
+    false,
+  );
+  const current = (await getLocalFile('file', owner))!;
+  assert.equal(await current.blob.text(), 'new restored bytes');
+  assert.equal(current.uploaded, false);
+  assert.equal(await uploadProgress('file', owner), undefined);
+});
+
+void test('a download only fills an empty cache and preserves a concurrently saved file', async () => {
+  const { cacheDownloadedFile } = await import('../lib/stride/storage');
+  const owner = 'download-race';
+  await saveFile('file', new Blob(['restored bytes']), owner);
+  const cached = await cacheDownloadedFile(
+    'file',
+    new Blob(['stale download']),
+    owner,
+  );
+  assert.equal(await cached.blob.text(), 'restored bytes');
+  assert.equal(cached.uploaded, false);
+  const missing = await cacheDownloadedFile(
+    'missing',
+    new Blob(['downloaded bytes']),
+    owner,
+  );
+  assert.equal(await missing.blob.text(), 'downloaded bytes');
+  assert.equal(missing.uploaded, true);
+});

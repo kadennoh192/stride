@@ -1,3 +1,5 @@
+import { attachmentReferences } from './attachment-references';
+import { attachmentId, contentHash } from './attachment-model';
 import {
   type Snapshot,
   type LocalFile,
@@ -79,35 +81,11 @@ async function bounded(stream: ReadableStream<Uint8Array>, limit: number) {
   }
   return bytes;
 }
-function fileIds(snapshot: Snapshot) {
-  const ids = new Set<string>();
-  for (const e of materialize(snapshot.fields, true)) {
-    if (e.kind === 'block' && typeof e.data.file === 'string' && e.data.file)
-      ids.add(e.data.file);
-    if (e.kind === 'row') {
-      for (const value of Object.values({
-        ...e.data,
-        ...(e.data.values as Record<string, unknown>),
-      })) {
-        if (Array.isArray(value))
-          for (const file of value)
-            if (
-              file &&
-              typeof file === 'object' &&
-              typeof file.id === 'string' &&
-              typeof file.name === 'string'
-            )
-              ids.add(file.id);
-      }
-    }
-  }
-  return ids;
-}
 export async function exportBackup(
   owner: string,
 ): Promise<{ json: string; code: string }> {
   const { snapshot, files: local } = await captureWorkspace(owner);
-  for (const id of fileIds(snapshot))
+  for (const id of attachmentReferences(snapshot))
     if (!local.some((f) => f.id === id)) {
       const url = await fileURL(id, owner);
       URL.revokeObjectURL(url);
@@ -118,7 +96,7 @@ export async function exportBackup(
     }
   if (local.reduce((sum, f) => sum + f.blob.size, 0) > 100_000_000)
     throw new Error(
-      'Attachments exceed this release’s 100 MB export limit. Export smaller workspaces separately; nothing has been removed.',
+      'Attachments exceed this preview’s 100 MB export limit. Nothing has been removed.',
     );
   const files: BackupFile[] = [];
   for (const f of local)
@@ -184,6 +162,8 @@ export async function stageBackup(input: string): Promise<StagedBackup> {
       ),
     );
   }
+  if (new TextEncoder().encode(json).byteLength > MAX_BYTES)
+    throw new Error('Backup exceeds the 150 MB restore limit.');
   let backup: Backup;
   try {
     backup = JSON.parse(json);
@@ -198,6 +178,7 @@ export async function stageBackup(input: string): Promise<StagedBackup> {
     backup.snapshot.version !== 2 ||
     !Array.isArray(backup.files) ||
     !Array.isArray(backup.snapshot.history) ||
+    !Array.isArray(backup.snapshot.outbox) ||
     !Array.isArray(backup.snapshot.conflicts)
   )
     throw new Error('Unsupported or incomplete backup');
@@ -205,11 +186,26 @@ export async function stageBackup(input: string): Promise<StagedBackup> {
     !backup.snapshot.fields ||
     Object.values(backup.snapshot.fields).some((f) => !validField(f)) ||
     !backup.snapshot.history.every(validChange) ||
+    !backup.snapshot.outbox.every(validChange) ||
     !backup.snapshot.conflicts.every(validConflict)
   )
     throw new Error('Backup contains invalid records');
   for (const [key, f] of Object.entries(backup.snapshot.fields))
     if (key !== `${f.entity}:${f.key}`) throw new Error('Invalid record key');
+  const entityKinds = new Map<string, string>();
+  const checkKind = (field: import('./types').Field) => {
+    const previous = entityKinds.get(field.entity);
+    if (previous && previous !== field.kind)
+      throw new Error('A backup record changes its entity type.');
+    entityKinds.set(field.entity, field.kind);
+  };
+  Object.values(backup.snapshot.fields).forEach(checkKind);
+  for (const change of [...backup.snapshot.history, ...backup.snapshot.outbox])
+    change.fields.forEach(checkKind);
+  for (const conflict of backup.snapshot.conflicts) {
+    checkKind(conflict.local);
+    checkKind(conflict.remote);
+  }
   const records = materialize(backup.snapshot.fields, true);
   records.forEach(validateEntity);
   const byId = new Map(records.map((e) => [e.id, e]));
@@ -219,10 +215,17 @@ export async function stageBackup(input: string): Promise<StagedBackup> {
   let bytes = 0;
   for (const f of backup.files) {
     if (
-      !/^[a-zA-Z0-9-]{1,150}$/.test(f.id) ||
+      !f ||
+      typeof f !== 'object' ||
+      typeof f.id !== 'string' ||
+      !attachmentId.test(f.id) ||
       ids.has(f.id) ||
       typeof f.name !== 'string' ||
+      f.name.length > 1024 ||
+      typeof f.hash !== 'string' ||
+      !contentHash.test(f.hash) ||
       typeof f.type !== 'string' ||
+      f.type.length > 255 ||
       typeof f.bytes !== 'string'
     )
       throw new Error('Invalid attachment metadata');
@@ -243,7 +246,7 @@ export async function stageBackup(input: string): Promise<StagedBackup> {
       owner: 'guest',
     });
   }
-  for (const id of fileIds(backup.snapshot))
+  for (const id of attachmentReferences(backup.snapshot))
     if (!ids.has(id))
       throw new Error('Backup is incomplete: an attachment is missing');
   return {

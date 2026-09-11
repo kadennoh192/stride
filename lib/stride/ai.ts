@@ -1,11 +1,16 @@
 import { stringValue } from './types';
-import { taskData, dateKey, type Task, type Entity } from './types';
+import {
+  taskData,
+  dateKey,
+  type Task,
+  type EntityCandidate,
+} from './types';
 import { validateEntity } from './validation';
 export async function parseTask(
   text: string,
   key: string,
   model: string,
-  context: Entity[],
+  context: EntityCandidate[],
   zone: string,
 ): Promise<Task['data']> {
   if (!key) throw new Error('Add your Gemini API key in Settings first.');

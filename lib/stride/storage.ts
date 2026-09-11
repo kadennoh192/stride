@@ -10,8 +10,8 @@ import {
   type Field,
   type Change,
   type Entity,
+  type EntityEdit,
   type Kind,
-  type Data,
   type Conflict,
   uid,
   taskData,
@@ -402,7 +402,7 @@ export async function transact(
           tx.objectStore('meta').put(metadata(result, revision));
         for (const f of files || []) {
           tx.objectStore('files').put(
-            { ...f, owner, uploaded: false },
+            { ...f, owner, uploaded: false, revision: uid() },
             `${owner}:${f.id}`,
           );
           tx.objectStore('fileQueue').put(f.id, `${owner}:${f.id}`);
@@ -583,7 +583,7 @@ export function materialize(
 ): Entity[] {
   return entitiesFromFields(fields, includeDeleted);
 }
-export type Edit = { id: string; kind: Kind; data: Data };
+export type Edit = EntityEdit;
 export function applyEdits(s: Snapshot, edits: Edit[], label: string) {
   if (!edits.length) return;
   const combined = new Map<string, Edit>();
@@ -591,7 +591,10 @@ export function applyEdits(s: Snapshot, edits: Edit[], label: string) {
     const prior = combined.get(edit.id);
     if (prior && prior.kind !== edit.kind)
       throw new Error('Record type cannot change');
-    combined.set(edit.id, { ...edit, data: { ...prior?.data, ...edit.data } });
+    combined.set(
+      edit.id,
+      { ...edit, data: { ...prior?.data, ...edit.data } } as Edit,
+    );
   }
   edits = [...combined.values()];
   const existing = new Map(
@@ -610,7 +613,7 @@ export function applyEdits(s: Snapshot, edits: Edit[], label: string) {
         (e.data._deleted === undefined && previous?.deleted),
     };
     validateEntity(next);
-    existing.set(e.id, next);
+    existing.set(e.id, next as Entity);
   }
   validateGraph(
     [...existing.values()].filter((e): e is Entity => !!e),
@@ -692,6 +695,7 @@ export async function addStarter(owner = 'guest') {
   }, owner);
 }
 export interface LocalFile {
+  revision?: string;
   id: string;
   blob: Blob;
   hash: string;
@@ -719,7 +723,7 @@ export async function saveFile(
   return new Promise<void>((resolve, reject) => {
     const tx = db.transaction(['files', 'fileQueue'], 'readwrite');
     tx.objectStore('files').put(
-      { id, blob, hash, name, uploaded, owner },
+      { id, blob, hash, name, uploaded, owner, revision: uid() },
       `${owner}:${id}`,
     );
     if (!uploaded) tx.objectStore('fileQueue').put(id, `${owner}:${id}`);
@@ -771,7 +775,10 @@ export async function restoreSnapshot(
       const importedIds = new Set(imported.map((e) => e.id));
       const edits: Edit[] = materialize(current.fields, true)
         .filter((e) => !importedIds.has(e.id))
-        .map((e) => ({ id: e.id, kind: e.kind, data: { _deleted: true } }));
+        .map(
+          (e) =>
+            ({ id: e.id, kind: e.kind, data: { _deleted: true } }) as Edit,
+        );
       for (const e of imported) {
         const previous = entityFromFields(current.fields, e.id);
         const cleared = Object.fromEntries(
@@ -783,7 +790,7 @@ export async function restoreSnapshot(
           id: e.id,
           kind: e.kind,
           data: { ...cleared, ...e.data, _deleted: !!e.deleted },
-        });
+        } as Edit);
       }
       applyEdits(current, edits, 'Restored backup');
       const known = new Set(current.history.map((c) => c.id));
@@ -849,5 +856,113 @@ export async function captureWorkspace(
     tx.oncomplete = () => resolve({ snapshot, files });
     tx.onabort = tx.onerror = () =>
       reject(new Error('Could not capture a consistent backup. Please retry.'));
+  });
+}
+
+export interface UploadProgress {
+  id: string;
+  hash: string;
+  confirmedBytes: number;
+  totalBytes: number;
+  updatedAt: number;
+}
+/** Guard transfer acknowledgments against files replaced by a concurrent restore. */
+export async function acknowledgeFileTransfer(
+  original: LocalFile,
+  hash: string,
+  confirmedBytes: number,
+  complete = false,
+): Promise<boolean> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(['files', 'fileQueue'], 'readwrite'),
+      key = `${original.owner}:${original.id}`;
+    let unchanged = false;
+    const request = tx.objectStore('files').get(key);
+    request.onsuccess = () => {
+      const current = request.result as LocalFile | undefined;
+      if (
+        !current ||
+        current.revision !== original.revision ||
+        current.hash !== original.hash
+      )
+        return;
+      unchanged = true;
+      if (complete) {
+        tx.objectStore('files').put({ ...current, hash, uploaded: true }, key);
+        tx.objectStore('fileQueue').delete(key);
+      } else
+        tx.objectStore('fileQueue').put(
+          {
+            id: original.id,
+            hash,
+            confirmedBytes,
+            totalBytes: original.blob.size,
+            updatedAt: Date.now(),
+          } satisfies UploadProgress,
+          key,
+        );
+    };
+    tx.oncomplete = () => resolve(unchanged);
+    tx.onabort = tx.onerror = () =>
+      reject(
+        new Error(
+          'Upload progress could not be saved. Your attachment remains on this device.',
+        ),
+      );
+  });
+}
+export async function uploadProgress(
+  id: string,
+  owner: string,
+): Promise<UploadProgress | undefined> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const r = db
+      .transaction('fileQueue')
+      .objectStore('fileQueue')
+      .get(`${owner}:${id}`);
+    r.onsuccess = () =>
+      resolve(typeof r.result === 'object' ? r.result : undefined);
+    r.onerror = () => reject(r.error);
+  });
+}
+
+/** A download may fill a missing cache entry, but never replace bytes saved while it was in flight. */
+export async function cacheDownloadedFile(
+  id: string,
+  blob: Blob,
+  owner: string,
+  name = 'attachment',
+): Promise<LocalFile> {
+  if (blob.size > 10_000_000)
+    throw new Error('Attachments are limited to 10 MB each.');
+  const hash = await hashBlob(blob),
+    db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('files', 'readwrite'),
+      files = tx.objectStore('files'),
+      key = `${owner}:${id}`;
+    let result: LocalFile;
+    const request = files.get(key);
+    request.onsuccess = () => {
+      result = (request.result as LocalFile) || {
+        id,
+        blob,
+        hash,
+        owner,
+        name,
+        uploaded: true,
+        revision: uid(),
+      };
+      if (!request.result) files.put(result, key);
+    };
+    tx.oncomplete = () => resolve(result);
+    tx.onerror = tx.onabort = () =>
+      reject(
+        new Error(
+          'Unable to cache the attachment. Your existing files were not changed.',
+        ),
+      );
   });
 }

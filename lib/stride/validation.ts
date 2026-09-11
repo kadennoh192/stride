@@ -1,6 +1,13 @@
 import { stringValue } from './types';
-import type { Change, Field, Kind, Entity, Conflict, Data } from './types';
-import { validZone, validDate } from './domain';
+import type {
+  Change,
+  Field,
+  Kind,
+  Entity,
+  EntityCandidate,
+  Conflict,
+} from './types';
+import { validZone, validDate, safeURL, embedURL } from './domain';
 export const kinds: Kind[] = [
   'task',
   'project',
@@ -78,7 +85,7 @@ export function validChange(v: unknown): v is Change {
     c.fields.every(validField)
   );
 }
-export function validateEntity(e: Entity) {
+export function validateEntity(e: EntityCandidate) {
   if (
     !id.test(e.id) ||
     !kinds.includes(e.kind) ||
@@ -140,7 +147,16 @@ export function validateEntity(e: Entity) {
       );
   }
   if (
-    ['project', 'page', 'database', 'habit', 'countdown'].includes(e.kind) &&
+    [
+      'project',
+      'page',
+      'database',
+      'habit',
+      'countdown',
+      'view',
+      'template',
+      'favorite',
+    ].includes(e.kind) &&
     (typeof e.data.title !== 'string' ||
       !e.data.title.trim() ||
       stringValue(e.data.title).length > 1000)
@@ -173,7 +189,12 @@ function checkItem(v: unknown) {
     typeof v.done === 'boolean'
   );
 }
-function optional(data: Data, key: string, check: (value: unknown) => boolean) {
+function optional(
+  data: unknown,
+  key: string,
+  check: (value: unknown) => boolean,
+) {
+  if (!object(data)) throw new ValidationError(`Invalid ${key}`);
   if (data[key] !== undefined && data[key] !== null && !check(data[key]))
     invalid(`Invalid ${key}`);
 }
@@ -214,11 +235,13 @@ const properties = [
   'rollup',
   'formula',
 ];
-function validateShape(e: Entity) {
+function validateShape(e: EntityCandidate) {
   const d = e.data;
   switch (e.kind) {
     case 'project':
       optional(d, 'sections', strings);
+      for (const key of ['color', 'background'])
+        optional(d, key, (v) => typeof v === 'string');
       break;
     case 'page':
       optional(d, 'parent', (v) => typeof v === 'string' && (!v || id.test(v)));
@@ -235,6 +258,13 @@ function validateShape(e: Entity) {
       optional(d, 'rich', object);
       optional(d, 'checked', (v) => typeof v === 'boolean');
       optional(d, 'file', (v) => typeof v === 'string' && (!v || id.test(v)));
+      optional(d, 'url', (v) => typeof v === 'string');
+      if (
+        d.url &&
+        ((d.type === 'embed' && !embedURL(stringValue(d.url))) ||
+          (d.type !== 'embed' && !safeURL(stringValue(d.url))))
+      )
+        invalid('Invalid or unsafe block URL');
       break;
     case 'database': {
       if (!Array.isArray(d.properties)) invalid('Invalid database properties');
@@ -252,8 +282,32 @@ function validateShape(e: Entity) {
           !strings(p.options)
         )
           invalid('Invalid or duplicate database property');
+        optional(
+          p,
+          'target',
+          (v) => typeof v === 'string' && (!v || id.test(v)),
+        );
+        optional(
+          p,
+          'expression',
+          (v) => typeof v === 'string' && v.length <= 10000,
+        );
+        for (const key of ['relation', 'property'])
+          optional(
+            p,
+            key,
+            (v) => typeof v === 'string' && (!v || id.test(v)),
+          );
+        optional(p, 'aggregate', (v) =>
+          ['count', 'sum', 'average', 'min', 'max'].includes(String(v)),
+        );
         seen.add((p as { id: string }).id);
       }
+      optional(
+        d,
+        'dateProperty',
+        (v) => typeof v === 'string' && (!v || seen.has(v)),
+      );
       break;
     }
     case 'row':
@@ -296,6 +350,7 @@ function validateShape(e: Entity) {
         !['focus', 'break', 'longBreak'].includes(String(d.phase))
       )
         invalid('Invalid focus session');
+      optional(d, 'task', (v) => typeof v === 'string' && (!v || id.test(v)));
       break;
     case 'completion':
       if (typeof d.task !== 'string' || !id.test(d.task) || !instant(d.at))
@@ -304,14 +359,52 @@ function validateShape(e: Entity) {
     case 'countdown':
       if (typeof d.date !== 'string' || !Number.isFinite(Date.parse(d.date)))
         invalid('Choose a valid countdown date');
+      optional(
+        d,
+        'timezone',
+        (v) => typeof v === 'string' && (!v || validZone(v)),
+      );
       break;
     case 'comment':
       if (
         typeof d.target !== 'string' ||
         !id.test(d.target) ||
-        typeof d.text !== 'string'
+        typeof d.text !== 'string' ||
+        !d.text.trim() ||
+        !instant(d.at)
       )
         invalid('Invalid page comment');
+      break;
+    case 'view':
+      optional(d, 'database', (v) => typeof v === 'string' && id.test(v));
+      for (const key of [
+        'layout',
+        'query',
+        'filterProp',
+        'filterValue',
+        'sort',
+        'group',
+      ])
+        optional(d, key, (v) => typeof v === 'string');
+      optional(d, 'descending', (v) => typeof v === 'boolean');
+      optional(d, 'hidden', strings);
+      optional(d, 'filter', object);
+      break;
+    case 'template':
+      if (!['page', 'row'].includes(String(d.type)))
+        invalid('Invalid template type');
+      optional(d, 'database', (v) => typeof v === 'string' && id.test(v));
+      optional(d, 'pageTemplate', object);
+      optional(
+        d,
+        'blocks',
+        (v) => Array.isArray(v) && v.every((block) => object(block)),
+      );
+      optional(d, 'row', object);
+      break;
+    case 'favorite':
+      if (!finite(d.tip, 0, 10000) || !Number.isInteger(d.tip))
+        invalid('Invalid favorite');
       break;
     case 'settings':
       optional(
@@ -398,13 +491,14 @@ export function validateGraph(
         if (!entity || entity.deleted) continue;
         path.add(node.id);
         stack.push({ id: node.id, exit: true });
-        const refs =
+        const parent = entity.data.parent;
+        const refs: string[] =
           edge === 'parent'
-            ? entity.data.parent
-              ? [entity.data.parent]
+            ? typeof parent === 'string' && parent
+              ? [parent]
               : []
             : entity.kind === 'task'
-              ? (entity.data.dependencies as string[])
+              ? entity.data.dependencies
               : [];
         for (const ref of refs) {
           const target = lookup(ref);

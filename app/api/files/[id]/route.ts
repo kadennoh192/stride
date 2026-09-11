@@ -1,3 +1,5 @@
+import { readBounded, sha256, UploadError } from '@/lib/server/file-upload';
+import { attachmentId, ATTACHMENT_LIMIT } from '@/lib/stride/attachment-model';
 import { authorize } from '@/lib/server/auth';
 import { bucket, sameOrigin } from '@/lib/server/bindings';
 export async function PUT(
@@ -8,17 +10,23 @@ export async function PUT(
   const user = await authorize(request);
   if (user instanceof Response) return user;
   if (!user) return new Response('Sign in required', { status: 401 });
+  if (
+    request.headers.has('X-Stride-Owner') &&
+    request.headers.get('X-Stride-Owner') !== user.id
+  )
+    return new Response('Account changed', { status: 409 });
   const { id } = await params;
-  if (!/^[a-zA-Z0-9-]{1,100}$/.test(id))
+  if (!attachmentId.test(id))
     return new Response('Invalid file ID', { status: 400 });
-  if (Number(request.headers.get('content-length')) > 10000000)
-    return new Response('Maximum file size is 10 MB', { status: 413 });
-  const bytes = await request.arrayBuffer();
-  if (bytes.byteLength > 10000000)
-    return new Response('Maximum file size is 10 MB', { status: 413 });
-  const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
+  let bytes: Uint8Array;
+  try {
+    bytes = await readBounded(request, ATTACHMENT_LIMIT);
+  } catch (error) {
+    return new Response('Maximum file size is 10 MB', {
+      status: error instanceof UploadError ? error.status : 400,
+    });
+  }
+  const hash = await sha256(bytes);
   if (request.headers.get('X-Content-SHA256') !== hash)
     return new Response('Attachment integrity check failed', { status: 400 });
   await bucket().put(`${user.id}/${id}`, bytes, {
@@ -37,8 +45,13 @@ export async function GET(
   const user = await authorize(request);
   if (user instanceof Response) return user;
   if (!user) return new Response('Sign in required', { status: 401 });
+  if (
+    request.headers.has('X-Stride-Owner') &&
+    request.headers.get('X-Stride-Owner') !== user.id
+  )
+    return new Response('Account changed', { status: 409 });
   const { id } = await params;
-  if (!/^[a-zA-Z0-9-]{1,100}$/.test(id))
+  if (!attachmentId.test(id))
     return new Response('Invalid file ID', { status: 400 });
   const file = await bucket().get(`${user.id}/${id}`);
   if (!file) return new Response('File not found', { status: 404 });

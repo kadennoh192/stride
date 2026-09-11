@@ -515,7 +515,7 @@ export default function Pages({ pageId }: { pageId?: string }) {
   };
   const addBlock = async () => {
     await store.add('block', {
-      page: pageId,
+      page: page!.id,
       type: newType,
       text: '',
       order: (blocks.at(-1)?.data.order || 0) + 100,
@@ -686,7 +686,9 @@ export default function Pages({ pageId }: { pageId?: string }) {
               <Select
                 label="Block type"
                 value={block.data.type}
-                onChange={(type) => void store.update(block, { type })}
+                onChange={(type) =>
+                  void store.update(block, { type: type as BlockType })
+                }
                 options={blockTypes}
               />
               <ReorderButtons
@@ -738,7 +740,7 @@ export default function Pages({ pageId }: { pageId?: string }) {
           <h3>Backlinks</h3>
           {backlinks.length ? (
             backlinks.map((b) => (
-              <a key={b.id} href={`#page/${b.data.page}`}>
+              <a key={b.id} href={`#page/${stringValue(b.data.page)}`}>
                 {pages.find((p) => p.id === b.data.page)?.data.title || 'Page'}
               </a>
             ))

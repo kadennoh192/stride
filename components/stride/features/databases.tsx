@@ -11,6 +11,7 @@ import {
   type PropertyType,
   type Entity,
   type Task,
+  type Template,
   uid,
   taskData,
 } from '@/lib/stride/types';
@@ -1095,25 +1096,37 @@ export function DatabaseSurface({
         <h3>Entry templates</h3>
         {store.entities
           .filter(
-            (e) =>
+            (e): e is Template =>
               e.kind === 'template' &&
               e.data.type === 'row' &&
               e.data.database === databaseId,
           )
-          .map((t) => (
-            <button
-              className="secondary-button"
-              key={t.id}
-              onClick={() =>
-                void store.add('row', {
-                  ...(t.data.row as Record<string, unknown>),
-                  database: databaseId,
-                })
-              }
-            >
-              {stringValue(t.data.title)}
-            </button>
-          ))}
+          .map((t) => {
+            const row = t.data.row;
+            if (!row) return null;
+            const title =
+              typeof row.title === 'string' ? row.title : 'Untitled entry';
+            const values =
+              row.values && typeof row.values === 'object'
+                ? row.values
+                : {};
+            return (
+              <button
+                className="secondary-button"
+                key={t.id}
+                onClick={() =>
+                  void store.add('row', {
+                    ...row,
+                    database: databaseId,
+                    title,
+                    values,
+                  })
+                }
+              >
+                {stringValue(t.data.title)}
+              </button>
+            );
+          })}
         <p className="muted">
           Open an entry and save it as a template to reuse its properties.
         </p>

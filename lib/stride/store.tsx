@@ -15,8 +15,10 @@ import {
 } from 'react';
 import {
   type Entity,
+  type EntityData,
+  type EntityOf,
+  type EntityPatch,
   type Kind,
-  type Data,
   type Settings,
   type Task,
   type Change,
@@ -33,9 +35,8 @@ import {
   type Edit,
   addStarter,
   allFiles,
-  hashBlob,
-  saveFile,
 } from './storage';
+import { uploadFile } from './upload';
 import { nextOccurrence } from './domain';
 interface Account {
   configured: boolean;
@@ -53,8 +54,16 @@ interface Store {
   owner: string;
   notice: (s: string) => void;
   edit: (edits: Edit[], label?: string) => Promise<void>;
-  add: (kind: Kind, data: Data, label?: string) => Promise<string>;
-  update: (e: Entity, data: Data, label?: string) => Promise<void>;
+  add: <K extends Kind>(
+    kind: K,
+    data: EntityData<K>,
+    label?: string,
+  ) => Promise<string>;
+  update: <K extends Kind>(
+    e: EntityOf<K>,
+    data: EntityPatch<K>,
+    label?: string,
+  ) => Promise<void>;
   remove: (e: Entity) => Promise<void>;
   complete: (task: Task) => Promise<void>;
   undo: () => Promise<void>;
@@ -239,23 +248,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (currentOwner.current === owner) setSnapshot(state);
         again = state.outbox.length > 0 || data.more === true;
       }
-      for (const f of (await allFiles(owner)).filter((f) => !f.uploaded)) {
-        const response = await fetch(`/api/files/${f.id}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': f.blob.type || 'application/octet-stream',
-            'X-Content-SHA256': f.hash || (await hashBlob(f.blob)),
-          },
-          body: f.blob,
-          signal: AbortSignal.timeout(30000),
+      for (const file of (await allFiles(owner)).filter(
+        (file) => !file.uploaded,
+      )) {
+        if (currentOwner.current !== owner) return;
+        await uploadFile(file, (confirmed, total) => {
+          if (currentOwner.current === owner)
+            setSyncStatus(
+              `Uploading attachment · ${Math.round(total ? (confirmed / total) * 100 : 100)}%`,
+            );
         });
-        if (!response.ok) throw new Error('Attachment upload will retry');
-        await saveFile(f.id, f.blob, owner, f.name, true);
       }
+      const pendingAttachments = (await allFiles(owner)).some(
+        (file) => !file.uploaded,
+      );
       failures.current = 0;
       retryAt.current = 0;
       if (currentOwner.current === owner)
-        setSyncStatus(again ? 'Sync continuing…' : 'All changes synced');
+        setSyncStatus(
+          again || pendingAttachments
+            ? 'Sync continuing…'
+            : 'All changes synced',
+        );
       broadcast.current?.postMessage({ owner });
     } catch (e) {
       failures.current++;
@@ -566,17 +580,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         edit,
         add: async (kind, data, label) => {
           const id = uid();
-          await edit([{ id, kind, data }], label || `Created ${kind}`);
+          await edit(
+            [{ id, kind, data } as Edit],
+            label || `Created ${kind}`,
+          );
           return id;
         },
         update: async (e, data, label) =>
           edit(
-            [{ id: e.id, kind: e.kind, data }],
+            [{ id: e.id, kind: e.kind, data } as Edit],
             label || `Updated ${stringValue(e.data.title || e.kind)}`,
           ),
         remove: async (e) => {
           await edit(
-            [{ id: e.id, kind: e.kind, data: { _deleted: true } }],
+            [
+              {
+                id: e.id,
+                kind: e.kind,
+                data: { _deleted: true },
+              } as Edit,
+            ],
             `Deleted ${stringValue(e.data.title || e.kind)}`,
           );
           notice('Moved to trash. Undo is available.');

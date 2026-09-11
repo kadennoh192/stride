@@ -6,9 +6,9 @@ Status: **development preview; full objective remains active**. Implemented sour
 
 The automated suite covers version-one and version-two migrations; atomic writes and operation queues; owner isolation; restart ordering; concurrent saves; injected quota failure; field conflicts and deletion races; backup integrity, attachment bytes, and pre-restore recovery; task recurrence date arithmetic; timezone gaps/ambiguities; graph cycles; formula evaluation and short-circuiting; timer closure/restart; AI context boundaries and malformed responses; offline shell caching; and a local D1/R2 integration with mocked Auth responses.
 
-The last directly observed full test run passed 24 tests. Run the checks again against the exact source selected for publication. Local development logs are in ignored `outputs/qa/`, not included in the deployment.
+The last directly observed full test run passed 28 tests. Run the checks again against the exact source selected for publication. Local development logs are in ignored `outputs/qa/`, not included in the deployment.
 
-Production builds have succeeded during implementation. The build finalizer precaches local hashed bundles, including lazy feature modules. Final-source build and private publication still require confirmation from their actual tool results.
+Production builds have succeeded during implementation. The build finalizer precaches local hashed bundles, including lazy feature modules. The first validated source was published privately at https://stride-workspace.mooeykadancow.chatgpt.site. Subsequent changes require their own successful build and publication results.
 
 Browser control was unavailable in the most recent environment (no browser surfaces; in-app browser creation returned unavailable). Earlier browser work exercised task creation and search, but did not prove the final responsive layouts, editor workflows, or PWA behavior. Do not represent browser or real-device gates as passed.
 
@@ -18,11 +18,11 @@ A 60,000-record synthetic IndexedDB fixture was loaded during a diagnostic. The 
 
 | Requirement | Current implementation/evidence | Remaining acceptance |
 | --- | --- | --- |
-| Modular, strongly typed domain | Feature modules, domain functions, runtime validators | Replace remaining generic entity payload paths with a complete discriminated union |
+| Modular, strongly typed domain | Feature modules, domain functions, a complete kind-discriminated entity/edit API, and per-kind runtime validators | Keep compile-time and import-validation coverage aligned as new record kinds are added |
 | Versioned indexed storage | Schema 3, owner/record/field/operation indexes; migration and failure tests | Multi-tab browser migration/blocked-upgrade test; long offline datasets |
 | Atomic edits and outgoing operations | One transaction; injected abort/quota tests | Real browser quota/eviction test |
 | D1 durability and R2 integrity | Owner authorization and D1/R2 integration tests | Verify actual cloud records, reconnect, and cloud backup |
-| Attachment queues | Durable whole-file retry and hash checks | Byte-range/multipart resume and interrupted-transfer tests |
+| Attachment queues | Resumable 1 MB chunks, persisted progress, remote hash reconciliation; local R2 interruption/restart, corrupt-part repair, empty-file and owner-switch checks | Browser/network interruption, long-offline resume and staging-cleanup acceptance |
 | Supabase accounts | Signup, login, verify, recover, password, logout APIs and UI | Real project, email delivery, callback, account switching and access-gate verification |
 | Account isolation and guest import | Owner-keyed stores; explicit staged backup import | Multi-device UI account-switch tests; logout notification lifecycle |
 | Sync revisions, acknowledgments, cursors | Field/entity base stamps, operation IDs, D1 dedup, paginated changes | Concurrent multi-device stress, kind/graph races, and clock-skew tests |
@@ -71,7 +71,7 @@ A 60,000-record synthetic IndexedDB fixture was loaded during a diagnostic. The 
 
 ## Next implementation priorities
 
-1. Finish the schema/reference and attachment reliability gaps, then validate complete recovery limits.
+1. Finish discriminated schemas/references, complete large-workspace recovery, and validate attachment transfers on real devices.
 2. Audit every editor and view against its functional requirements, including sections, saved layouts and cross-device conflicts.
 3. Configure independent accounts and scheduler credentials, then verify cloud behavior and delivery.
 4. Complete browser/real-device/accessibility/performance acceptance before widening access or calling the web release complete.
