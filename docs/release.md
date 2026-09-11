@@ -54,7 +54,7 @@ A 60,000-record synthetic IndexedDB fixture was loaded during a diagnostic. The 
 | Templates/quiz/inspiration | Usable template actions, explainable suggestions, saved favorites | End-to-end activation and persistence |
 | Optional Gemini | Device key, model input, selected task/project context, editable preview | Live model/key failure testing and explicit ambiguous-date clarification workflow |
 | Customization | Theme modes/presets/accent, density, typography, nav order/visibility, backgrounds | Full custom theme controls, placement coverage, persisted layout preferences and contrast validation |
-| Complete backup/restore | Checksummed compressed code, JSON, bytes, staging and atomic recovery tests | Streaming download/import for workspaces beyond current safety limits; full content matrix round-trip |
+| Complete backup/restore | Stream-friendly version-three archive with checksummed metadata and per-file hashes; compact code/JSON compatibility; staged validation and atomic recovery tests | Real-browser archive round-trip above 100 MB; full content matrix round-trip |
 | Accessibility | Semantic controls, focus drawer, reduced motion, chart data alternatives | Screen readers, 200% zoom, contrast, keyboard-only and touch walkthroughs |
 | Performance | Incremental persisted fields, indexed records, pagination, lazy editors | Replace full-snapshot startup where needed; 10k tasks/50k rows and sub-100ms reference-device interactions |
 | Staged release/monitoring | Additive migrations, deployment instructions, private audience preserved | Cloud backup/rollback exercise, final preview, operational metrics and alert delivery |
@@ -71,7 +71,7 @@ A 60,000-record synthetic IndexedDB fixture was loaded during a diagnostic. The 
 
 ## Next implementation priorities
 
-1. Finish discriminated schemas/references, complete large-workspace recovery, and validate attachment transfers on real devices.
+1. Validate large `.stride` archives and resumable attachment transfers on real devices, including interrupted and low-space cases.
 2. Audit every editor and view against its functional requirements, including sections, saved layouts and cross-device conflicts.
 3. Configure independent accounts and scheduler credentials, then verify cloud behavior and delivery.
 4. Complete browser/real-device/accessibility/performance acceptance before widening access or calling the web release complete.
