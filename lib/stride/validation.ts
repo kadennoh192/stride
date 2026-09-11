@@ -235,6 +235,24 @@ const properties = [
   'rollup',
   'formula',
 ];
+const navigation = [
+  'inbox',
+  'today',
+  'upcoming',
+  'tasks',
+  'calendar',
+  'filters',
+  'pages',
+  'databases',
+  'habits',
+  'focus',
+  'matrix',
+  'countdowns',
+  'insights',
+  'explore',
+  'archive',
+  'history',
+];
 function validateShape(e: EntityCandidate) {
   const d = e.data;
   switch (e.kind) {
@@ -293,11 +311,7 @@ function validateShape(e: EntityCandidate) {
           (v) => typeof v === 'string' && v.length <= 10000,
         );
         for (const key of ['relation', 'property'])
-          optional(
-            p,
-            key,
-            (v) => typeof v === 'string' && (!v || id.test(v)),
-          );
+          optional(p, key, (v) => typeof v === 'string' && (!v || id.test(v)));
         optional(p, 'aggregate', (v) =>
           ['count', 'sum', 'average', 'min', 'max'].includes(String(v)),
         );
@@ -407,30 +421,69 @@ function validateShape(e: EntityCandidate) {
         invalid('Invalid favorite');
       break;
     case 'settings':
+      optional(d, 'name', (v) => typeof v === 'string' && v.length <= 100);
+      optional(d, 'theme', (v) =>
+        ['light', 'dark', 'system'].includes(String(v)),
+      );
+      optional(
+        d,
+        'accent',
+        (v) => typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v),
+      );
+      optional(d, 'density', (v) =>
+        ['compact', 'comfortable', 'spacious'].includes(String(v)),
+      );
+      optional(d, 'font', (v) => ['sans', 'serif', 'mono'].includes(String(v)));
+      for (const key of ['motion', 'rightPanel'])
+        optional(d, key, (v) => typeof v === 'boolean');
       optional(
         d,
         'timezone',
         (v) => v === '' || (typeof v === 'string' && validZone(v)),
       );
-      for (const key of ['hidden', 'navOrder']) optional(d, key, strings);
+      for (const key of ['hidden', 'navOrder'])
+        optional(
+          d,
+          key,
+          (v) =>
+            strings(v) &&
+            new Set(v).size === v.length &&
+            v.every((item) => navigation.includes(item)),
+        );
       for (const key of ['focusMinutes', 'breakMinutes', 'longBreakMinutes'])
         optional(d, key, (v) => finite(v, 1, 240));
       optional(d, 'cycles', (v) => finite(v, 1, 12) && Number.isInteger(v));
-      for (const key of ['quietStart', 'quietEnd'])
-        optional(d, key, (v) => typeof v === 'string' && time.test(v));
+      optional(d, 'dailyGoal', (v) => finite(v, 1, 100) && Number.isInteger(v));
       optional(
         d,
-        'activeTimer',
-        (v) =>
-          object(v) &&
+        'model',
+        (v) => typeof v === 'string' && /^[a-zA-Z0-9._-]{1,100}$/.test(v),
+      );
+      optional(
+        d,
+        'taskPaneWidth',
+        (v) => finite(v, 340, 740) && Number.isInteger(v),
+      );
+      for (const key of ['quietStart', 'quietEnd'])
+        optional(d, key, (v) => typeof v === 'string' && time.test(v));
+      optional(d, 'activeTimer', (v) => {
+        if (!object(v)) return false;
+        const duration = Number(v.duration);
+        return (
           typeof v.id === 'string' &&
           id.test(v.id) &&
           finite(v.end) &&
-          finite(v.remaining, 0, 86400) &&
-          finite(v.duration, 0, 86400) &&
+          finite(v.duration, 1, 86400) &&
+          finite(v.remaining, 0, duration) &&
           typeof v.running === 'boolean' &&
-          ['focus', 'break', 'longBreak'].includes(String(v.phase)),
-      );
+          (!v.running || Number(v.end) > 0) &&
+          finite(v.cycle, 1, 10000) &&
+          Number.isInteger(v.cycle) &&
+          typeof v.task === 'string' &&
+          (!v.task || id.test(v.task)) &&
+          ['focus', 'break', 'longBreak'].includes(String(v.phase))
+        );
+      });
       break;
     default:
       break;
