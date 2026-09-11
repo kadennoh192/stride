@@ -253,16 +253,29 @@ export type Countdown = BaseEntity<
   }
 >;
 export type SettingsEntity = BaseEntity<'settings', Settings>;
+export const databaseLayouts = [
+  'table',
+  'board',
+  'list',
+  'gallery',
+  'calendar',
+  'timeline',
+] as const;
+export type DatabaseLayout = (typeof databaseLayouts)[number];
 export type SavedView = BaseEntity<
   'view',
   {
     title: string;
     database?: string;
-    layout?: string;
+    layout?: DatabaseLayout;
+    query?: string;
+    filterProp?: string;
+    filterValue?: string;
     sort?: string;
-    sortDirection?: string;
+    descending?: boolean;
     group?: string;
     hidden?: string[];
+    propertyOrder?: string[];
     filter?: Record<string, unknown>;
     [key: string]: unknown;
   }
