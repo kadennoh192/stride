@@ -168,6 +168,16 @@ function Workspace() {
   const visibleTask =
     taskEditor || routedTask || (route === 'add' ? 'new' : null);
   const visibleProject = projectEditor || routedProject;
+  const routeProject =
+    route.startsWith('project/') || route.startsWith('project-settings/')
+      ? route.split('/')[1] || ''
+      : '';
+  const projectionRoute =
+    ['today', 'inbox', 'upcoming', 'tasks', 'archive', 'filters'].includes(
+      route,
+    ) ||
+    (!!routeProject && routeProject === store.startupProject) ||
+    route.startsWith('filter/');
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -510,7 +520,7 @@ function Workspace() {
               : undefined
           }
         >
-          {!store.ready ? (
+          {!store.ready || (store.hydrating && !projectionRoute) ? (
             <Loading />
           ) : (
             <Suspense fallback={<Loading />}>
@@ -627,6 +637,12 @@ function Workspace() {
             onChange={(e) => setSearch(e.target.value)}
           />
           <div className="search-results">
+            {store.hydrating && (
+              <output className="hydration-notice">
+                Finishing the workspace index. Search results may still be
+                arriving.
+              </output>
+            )}
             {results.map((e) => (
               <button
                 key={e.id}
@@ -642,7 +658,7 @@ function Workspace() {
                 <small>{e.kind}</small>
               </button>
             ))}
-            {results.length === 0 && (
+            {results.length === 0 && !store.hydrating && (
               <p className="muted">No matching records.</p>
             )}
           </div>

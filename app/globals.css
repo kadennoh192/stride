@@ -687,6 +687,16 @@ h1 {
   color: var(--muted-foreground);
   line-height: 1.7;
 }
+.hydration-notice {
+  display: block;
+  margin: 0 0 0.75rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 0.82rem;
+}
 .habit-preview {
   display: flex;
   align-items: center;

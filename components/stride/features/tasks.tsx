@@ -687,7 +687,7 @@ export function Tasks({
                   month: 'long',
                   day: 'numeric',
                 })
-              : `${shown.length} ${route === 'archive' ? 'completed' : 'active'} tasks`}
+              : `${shown.length} ${route === 'archive' ? 'completed' : 'active'} tasks${store.hydrating ? ' loaded so far' : ''}`}
           </p>
         </div>
         <button
@@ -709,6 +709,11 @@ export function Tasks({
         }
       >
         <section>
+          {store.hydrating && (
+            <output className="hydration-notice">
+              Opening remaining tasks from this device…
+            </output>
+          )}
           <div className="viewbar">
             {['list', 'board', 'table', 'timeline'].map((v) => (
               <button

@@ -15,9 +15,11 @@ import {
   type Conflict,
   uid,
   taskData,
+  dateKey,
+  shiftDate,
 } from './types';
 import { validateEntity, validateGraph, validField } from './validation';
-export const VERSION = 4;
+export const VERSION = 5;
 export const SNAPSHOT_VERSION = 2;
 export interface Snapshot {
   version: number;
@@ -150,6 +152,14 @@ export function openDB() {
           'kind',
           'container',
           'active',
+          'id',
+        ]);
+      if (!records.indexNames.contains('ownerKindDueActive'))
+        records.createIndex('ownerKindDueActive', [
+          'owner',
+          'kind',
+          'active',
+          'due',
           'id',
         ]);
       if (event.oldVersion > 0 && event.oldVersion < 4) {
@@ -514,14 +524,7 @@ export async function indexedRecords(
         c.advance(offset);
         return;
       }
-      const {
-        owner: _owner,
-        container: _container,
-        due: _due,
-        active: _active,
-        ...entity
-      } = c.value;
-      result.push(entity);
+      result.push(entityFromIndexedRecord(c.value));
       c.continue();
     };
     request.onerror = () => reject(request.error);
@@ -555,18 +558,85 @@ export async function indexedRecordPage(
         resolve(result);
         return;
       }
-      const {
-        owner: _owner,
-        container: _container,
-        due: _due,
-        active: _active,
-        ...entity
-      } = cursor.value;
-      result.push(entity);
+      result.push(entityFromIndexedRecord(cursor.value));
       cursor.continue();
     };
     request.onerror = () => reject(request.error);
   });
+}
+
+function entityFromIndexedRecord(value: Record<string, unknown>): Entity {
+  const {
+    owner: _owner,
+    container: _container,
+    due: _due,
+    active: _active,
+    ...entity
+  } = value;
+  return entity as unknown as Entity;
+}
+
+export async function indexedDueRecords(
+  owner: string,
+  kind: Kind,
+  from: string,
+  through: string,
+  limit = 300,
+): Promise<Entity[]> {
+  const database = await openDB();
+  return new Promise((resolve, reject) => {
+    const index = database
+      .transaction('records')
+      .objectStore('records')
+      .index('ownerKindDueActive');
+    const lower = [owner, kind, 1, from, ''];
+    const upper = [owner, kind, 1, through, '\uffff'];
+    const request = index.openCursor(IDBKeyRange.bound(lower, upper));
+    const result: Entity[] = [];
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor || result.length >= limit) {
+        resolve(result);
+        return;
+      }
+      result.push(entityFromIndexedRecord(cursor.value));
+      cursor.continue();
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/** A bounded first-screen projection; the full conflict/sync snapshot loads separately. */
+export async function startupProjection(
+  owner: string,
+  project = '',
+): Promise<Entity[]> {
+  const through = shiftDate(dateKey(), 90);
+  const [undated, scheduled, projects, views, settings, completions, scoped] =
+    await Promise.all([
+      indexedDueRecords(owner, 'task', '', '', 100),
+      indexedDueRecords(owner, 'task', '0000-01-01', through, 300),
+      indexedRecordPage(owner, 'project', undefined, 100),
+      indexedRecordPage(owner, 'view', undefined, 100),
+      indexedRecordPage(owner, 'settings', undefined, 1),
+      indexedRecordPage(owner, 'completion', undefined, 100),
+      project
+        ? indexedRecordPage(owner, 'task', project, 300)
+        : Promise.resolve([]),
+    ]);
+  return [
+    ...new Map(
+      [
+        ...undated,
+        ...scheduled,
+        ...scoped,
+        ...projects,
+        ...views,
+        ...settings,
+        ...completions,
+      ].map((entity) => [entity.id, entity]),
+    ).values(),
+  ];
 }
 export function fieldKey(f: Pick<Field, 'entity' | 'key'>) {
   return `${f.entity}:${f.key}`;

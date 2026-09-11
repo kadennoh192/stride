@@ -35,6 +35,7 @@ import {
   type Edit,
   addStarter,
   allFiles,
+  startupProjection,
 } from './storage';
 import { uploadFile } from './upload';
 import { completionEdits } from './completion';
@@ -46,6 +47,8 @@ interface Store {
   entities: Entity[];
   settings: Settings;
   ready: boolean;
+  hydrating: boolean;
+  startupProject: string;
   error: string;
   syncStatus: string;
   history: Change[];
@@ -82,6 +85,11 @@ export function useStride() {
 }
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [startup, setStartup] = useState<{
+    owner: string;
+    project: string;
+    entities: Entity[];
+  } | null>(null);
   const [owner, setOwner] = useState('');
   const [account, setAccount] = useState<Account>({
     configured: false,
@@ -93,6 +101,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [undoEdits, setUndoEdits] = useState<Edit[]>([]);
   const working = useRef(false);
   const currentOwner = useRef(owner);
+  const loadedOwner = useRef('');
   useEffect(() => {
     currentOwner.current = owner;
   }, [owner]);
@@ -131,7 +140,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     try {
       const state = await load(owner);
       if (currentOwner.current === owner) {
+        loadedOwner.current = owner;
         setSnapshot(state);
+        setStartup(null);
         setError('');
       }
     } catch (e) {
@@ -164,7 +175,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           applyEdits(s, edits, label);
         }, owner);
         if (currentOwner.current === owner) {
+          loadedOwner.current = owner;
           setSnapshot(state);
+          setStartup(null);
           setUndoEdits(reverse);
           setError('');
         }
@@ -245,7 +258,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           for (const c of data.history ?? [])
             if (!known.has(c.id)) s.history.push(c);
         }, owner);
-        if (currentOwner.current === owner) setSnapshot(state);
+        if (currentOwner.current === owner) {
+          loadedOwner.current = owner;
+          setSnapshot(state);
+          setStartup(null);
+        }
         again = state.outbox.length > 0 || data.more === true;
       }
       for (const file of (await allFiles(owner)).filter(
@@ -311,13 +328,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [refreshAccount, notice]);
   useEffect(() => {
-    if (owner)
+    if (owner) {
+      let project = '';
+      try {
+        const route = decodeURIComponent(location.hash.slice(1));
+        if (route.startsWith('project/')) project = route.split('/')[1] || '';
+        if (route.startsWith('project-settings/'))
+          project = route.split('/')[1] || '';
+      } catch {
+        // A malformed hash falls back to the general startup projection.
+      }
+      void startupProjection(owner, project)
+        .then((entities) => {
+          if (currentOwner.current === owner && loadedOwner.current !== owner) {
+            setStartup({ owner, project, entities });
+            setSyncStatus('Opening full workspace…');
+          }
+        })
+        .catch(() => {
+          // The full snapshot path reports storage failures and remains authoritative.
+        });
       // Loading the account snapshot synchronizes React with IndexedDB.
       // eslint-disable-next-line react/react-compiler
       void reload().then(() => {
         setUndoEdits([]);
         return sync();
       });
+    }
   }, [owner, reload, sync]);
   useEffect(() => {
     if ('BroadcastChannel' in window) {
@@ -411,9 +448,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return () => clearTimeout(timer);
     }
   }, [snapshot?.outbox.length, sync]);
+  const fullSnapshot = snapshot?.owner === owner ? snapshot : null;
+  const startupEntities = startup?.owner === owner ? startup.entities : null;
   const entities = useMemo(
-    () => (snapshot ? materialize(snapshot.fields) : []),
-    [snapshot],
+    () =>
+      fullSnapshot ? materialize(fullSnapshot.fields) : (startupEntities ?? []),
+    [fullSnapshot, startupEntities],
   );
   const settings = useMemo(
     () =>
@@ -437,7 +477,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           finished = finishElapsedTimer(s);
         }, owner);
         if (!disposed && currentOwner.current === owner) {
+          loadedOwner.current = owner;
           setSnapshot(state);
+          setStartup(null);
           if (finished)
             notice('Interval complete. Your next interval is ready in Focus.');
         }
@@ -550,11 +592,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       value={{
         entities,
         settings,
-        ready: !!snapshot && snapshot.owner === owner,
+        ready: !!fullSnapshot || !!startupEntities,
+        hydrating: !fullSnapshot,
+        startupProject:
+          startup?.owner === owner && !fullSnapshot ? startup.project : '',
         error,
         syncStatus,
-        history: snapshot?.history ?? [],
-        snapshot,
+        history: fullSnapshot?.history ?? [],
+        snapshot: fullSnapshot,
         account,
         owner,
         notice,
@@ -594,8 +639,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         reload,
         refreshAccount,
         starter: async () => {
-          setSnapshot(await addStarter(owner));
-          notice('Starter tasks added.');
+          const state = await addStarter(owner);
+          if (currentOwner.current === owner) {
+            loadedOwner.current = owner;
+            setSnapshot(state);
+            setStartup(null);
+            notice('Starter tasks added.');
+          }
         },
         setSettings: async (data) =>
           edit(

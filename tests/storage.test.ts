@@ -12,8 +12,9 @@ import {
   getLocalFile,
   listRecovery,
   restoreSnapshot,
+  startupProjection,
 } from '../lib/stride/storage';
-import { taskData, uid } from '../lib/stride/types';
+import { dateKey, defaults, taskData, uid } from '../lib/stride/types';
 import {
   exportBackup,
   exportBackupArchive,
@@ -300,6 +301,83 @@ void test('keyset record pages skip tombstones without scanning prior records', 
     ),
     ['task-c', 'task-d'],
   );
+});
+
+void test('startup projection is bounded, route-aware, and owner-isolated', async () => {
+  const owner = 'startup-projection';
+  await transact((state) => {
+    applyEdits(
+      state,
+      [
+        ...Array.from({ length: 105 }, (_, index) => ({
+          id: `undated-${String(index).padStart(3, '0')}`,
+          kind: 'task' as const,
+          data: taskData(`Undated ${index}`),
+        })),
+        {
+          id: 'scheduled-after-undated-cap',
+          kind: 'task' as const,
+          data: taskData('Scheduled', { due: dateKey() }),
+        },
+        {
+          id: 'project-far-future',
+          kind: 'task' as const,
+          data: taskData('Project deep link', {
+            project: 'project-a',
+            due: '2999-12-31',
+          }),
+        },
+        {
+          id: 'project-a',
+          kind: 'project' as const,
+          data: {
+            title: 'Project A',
+            color: '#5268e8',
+            sections: [],
+            background: '',
+          },
+        },
+        {
+          id: 'settings',
+          kind: 'settings' as const,
+          data: defaults,
+        },
+      ],
+      'Create startup fixture',
+    );
+    applyEdits(
+      state,
+      [{ id: 'undated-001', kind: 'task', data: { _deleted: true } }],
+      'Delete startup fixture record',
+    );
+  }, owner);
+  await transact((state) => {
+    applyEdits(
+      state,
+      [
+        {
+          id: 'other-owner-task',
+          kind: 'task',
+          data: taskData('Must not cross accounts', { due: dateKey() }),
+        },
+      ],
+      'Create isolated fixture',
+    );
+  }, 'startup-projection-other');
+
+  const projection = await startupProjection(owner, 'project-a');
+  const ids = new Set(projection.map((entity) => entity.id));
+  assert.equal(
+    projection.filter((entity) => entity.kind === 'task' && !entity.data.due)
+      .length,
+    100,
+  );
+  assert.equal(ids.has('scheduled-after-undated-cap'), true);
+  assert.equal(ids.has('project-far-future'), true);
+  assert.equal(ids.has('project-a'), true);
+  assert.equal(ids.has('settings'), true);
+  assert.equal(ids.has('undated-001'), false);
+  assert.equal(ids.has('other-owner-task'), false);
 });
 
 void test('concurrent saves serialize and a quota failure commits neither records nor operations', async () => {
