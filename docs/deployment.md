@@ -48,7 +48,7 @@ The server keeps access and refresh tokens in HttpOnly cookies. Browser storage 
 
 ## Background reminders
 
-Deploy `workers/reminders/wrangler.jsonc` separately to Cloudflare Workers. Set `STRIDE_ORIGIN` to the HTTPS application origin and the same `REMINDER_DISPATCH_SECRET` as the app. For an owner-private Sites deployment only, the scheduler also needs its permitted `SITES_ACCESS_TOKEN`; store it as a secret. Do not expose that token to the client.
+Deploy `workers/reminders/wrangler.jsonc` separately to Cloudflare Workers. It is a cron-only Worker: `workers_dev` and preview URLs stay disabled, so it has no public Worker URL. A brand-new Cloudflare Workers account may still require the one-time Workers onboarding page before it accepts a Cron Trigger. Set `STRIDE_ORIGIN` to the HTTPS application origin and the same `REMINDER_DISPATCH_SECRET` as the app. For an owner-private Sites deployment only, the scheduler also needs its permitted `SITES_ACCESS_TOKEN`; store it as a secret. That token lets only the scheduler pass the Sites owner-only gate; never expose it to the client, logs, source control, or a public Worker route.
 
 The scheduled trigger runs once per minute and calls `/api/reminders` with a signed request. Verify the callback can reach the application through its access gate. Configure alerts for dispatch failures and job backlog, using counts and IDs without task titles, descriptions, email contents, API keys, or push payloads.
 

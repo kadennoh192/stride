@@ -1,8 +1,3 @@
-interface Env {
-  STRIDE_ORIGIN: string;
-  REMINDER_DISPATCH_SECRET: string;
-  SITES_ACCESS_TOKEN?: string;
-}
 const scheduler = {
   async scheduled(
     _event: ScheduledController,
@@ -11,7 +6,11 @@ const scheduler = {
   ) {
     ctx.waitUntil(
       (async () => {
-        if (!env.STRIDE_ORIGIN || !env.REMINDER_DISPATCH_SECRET)
+        if (
+          !env.STRIDE_ORIGIN ||
+          !env.REMINDER_DISPATCH_SECRET ||
+          !env.SITES_ACCESS_TOKEN
+        )
           throw new Error('Scheduler environment missing');
         const timestamp = String(Date.now());
         const nonce = crypto.randomUUID();
@@ -43,9 +42,7 @@ const scheduler = {
               'X-Stride-Time': timestamp,
               'X-Stride-Nonce': nonce,
               'X-Stride-Signature': signature,
-              ...(env.SITES_ACCESS_TOKEN
-                ? { 'OAI-Sites-Authorization': env.SITES_ACCESS_TOKEN }
-                : {}),
+              'OAI-Sites-Authorization': env.SITES_ACCESS_TOKEN,
             },
             body,
             signal: AbortSignal.timeout(55000),
