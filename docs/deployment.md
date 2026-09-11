@@ -22,9 +22,11 @@ For local configuration, copy `.dev.vars.example` to `.dev.vars`, fill values lo
 
 ## Supabase email flows
 
-Configure the production Site URL, allowlisted callback origin, verification, and production email delivery in Supabase. This implementation accepts `token_hash` and `type` query parameters at the app root and verifies them through `/api/auth`; it does not consume an implicit-flow access-token fragment.
+Configure the production Site URL, allowlisted callback origin, verification, and production email delivery in Supabase. Stride starts confirmation and recovery with PKCE: Supabase's default `{{ .ConfirmationURL }}` email link returns a short-lived one-time `code`, and `/api/auth` exchanges it using an HttpOnly, 15-minute verifier cookie. Supabase access and refresh tokens never appear in the browser URL or browser storage. The link must be opened in the browser that requested it.
 
 Set `STRIDE_OWNER_EMAIL` before enabling account creation. The server rejects sign-up, sign-in, recovery, refreshed sessions, and authenticated workspace access for other email addresses. Create and verify the owner account, then keep the allowlist value configured for every deployment.
+
+The default Supabase confirmation and recovery templates work without edits. If custom SMTP is configured later, these direct token-hash links remain supported as an optional alternative.
 
 Confirmation template link:
 

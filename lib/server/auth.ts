@@ -21,6 +21,51 @@ export function cookies(request: Request): Record<string, string> {
   }
   return result;
 }
+type AuthFlowType = 'signup' | 'recovery';
+export interface AuthFlow {
+  type: AuthFlowType;
+  verifier: string;
+  challenge: string;
+}
+const base64Url = (bytes: Uint8Array) =>
+  btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+export async function createAuthFlow(type: AuthFlowType): Promise<AuthFlow> {
+  const verifierBytes = crypto.getRandomValues(new Uint8Array(32));
+  const verifier = base64Url(verifierBytes);
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(verifier),
+  );
+  return { type, verifier, challenge: base64Url(new Uint8Array(digest)) };
+}
+export function readAuthFlow(
+  request: Request,
+): Omit<AuthFlow, 'challenge'> | null {
+  const raw = cookies(request).stride_auth_flow || '';
+  const split = raw.indexOf('.');
+  const type = raw.slice(0, split);
+  const verifier = raw.slice(split + 1);
+  if (
+    !['signup', 'recovery'].includes(type) ||
+    !/^[A-Za-z0-9_-]{43,128}$/.test(verifier)
+  )
+    return null;
+  return { type: type as AuthFlowType, verifier };
+}
+export function setAuthFlow(
+  headers: Headers,
+  flow: Pick<AuthFlow, 'type' | 'verifier'> | null,
+  request: Request,
+) {
+  const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
+  headers.append(
+    'Set-Cookie',
+    `stride_auth_flow=${flow ? `${flow.type}.${flow.verifier}` : ''}; HttpOnly; SameSite=Lax; Path=/api/auth; Max-Age=${flow ? 900 : 0}${secure}`,
+  );
+}
 export const unavailable = () =>
   Response.json(
     { error: 'Account service unavailable. Your device data remains saved.' },
@@ -47,8 +92,7 @@ export async function getUser(
     if (response.status === 401 || response.status === 403) return null;
     if (!response.ok) throw new Error('Account service unavailable');
     const user = (await response.json()) as { id: string; email: string };
-    if (user.email.trim().toLowerCase() !== config.ownerEmail)
-      return null;
+    if (user.email.trim().toLowerCase() !== config.ownerEmail) return null;
     return user.id ? user : null;
   } catch {
     throw new Error('Account service unavailable');

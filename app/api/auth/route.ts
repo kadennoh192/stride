@@ -2,6 +2,9 @@ import {
   authConfig,
   cookies,
   authorize,
+  createAuthFlow,
+  readAuthFlow,
+  setAuthFlow,
   unavailable,
   setSession,
 } from '@/lib/server/auth';
@@ -101,7 +104,68 @@ export async function POST(request: Request) {
           return unavailable();
       }
       setSession(headers, {}, request);
+      setAuthFlow(headers, null, request);
       return Response.json({ ok: true }, { headers });
+    }
+    if (action === 'exchange') {
+      const code = body.code || '';
+      const flow = readAuthFlow(request);
+      if (!flow || !/^[A-Za-z0-9_-]{1,512}$/.test(code))
+        return Response.json(
+          {
+            error:
+              'This email link is invalid or was opened on another device.',
+          },
+          { status: 400, headers },
+        );
+      const r = await fetch(`${config.url}/auth/v1/token?grant_type=pkce`, {
+        method: 'POST',
+        headers: { apikey: config.key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auth_code: code, code_verifier: flow.verifier }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (r.status >= 500 || r.status === 429) return unavailable();
+      const result = (await r.json()) as {
+        error_description?: string;
+        msg?: string;
+        message?: string;
+        access_token?: string;
+        refresh_token?: string;
+        user?: { id?: string; email?: string };
+      };
+      if (!r.ok || !result.access_token || !result.refresh_token) {
+        setAuthFlow(headers, null, request);
+        return Response.json(
+          {
+            error:
+              result.error_description ||
+              result.msg ||
+              result.message ||
+              'This email link is invalid or expired.',
+          },
+          { status: 400, headers },
+        );
+      }
+      const authenticatedEmail = (result.user?.email || '')
+        .trim()
+        .toLowerCase();
+      if (authenticatedEmail !== config.ownerEmail) {
+        setSession(headers, {}, request);
+        setAuthFlow(headers, null, request);
+        return Response.json(
+          {
+            error:
+              'This private Stride account is not available for that email.',
+          },
+          { status: 403, headers },
+        );
+      }
+      setSession(headers, result, request);
+      setAuthFlow(headers, null, request);
+      return Response.json(
+        { ok: true, recovery: flow.type === 'recovery' },
+        { headers },
+      );
     }
     const paths: Record<string, string> = {
       login: '/token?grant_type=password',
@@ -136,6 +200,10 @@ export async function POST(request: Request) {
         },
         { status: 403, headers: noStore },
       );
+    const flow =
+      action === 'signup' || action === 'recover'
+        ? await createAuthFlow(action === 'signup' ? 'signup' : 'recovery')
+        : null;
     const data: Record<string, string> =
       action === 'verify'
         ? { token_hash: body.token_hash, type: body.type }
@@ -144,6 +212,12 @@ export async function POST(request: Request) {
           : {
               email: requestedEmail,
               ...(action !== 'recover' ? { password: body.password } : {}),
+              ...(flow
+                ? {
+                    code_challenge: flow.challenge,
+                    code_challenge_method: 's256',
+                  }
+                : {}),
             };
     const origin = new URL(request.url).origin;
     const r = await fetch(
@@ -190,13 +264,15 @@ export async function POST(request: Request) {
         setSession(headers, {}, request);
         return Response.json(
           {
-            error: 'This private Stride account is not available for that email.',
+            error:
+              'This private Stride account is not available for that email.',
           },
           { status: 403, headers },
         );
       }
       setSession(headers, result, request);
     }
+    if (flow) setAuthFlow(headers, result.access_token ? null : flow, request);
     return Response.json(
       { ok: true, verifyEmail: action === 'signup' && !result.access_token },
       { headers },

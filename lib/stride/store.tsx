@@ -304,14 +304,58 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [owner]);
   useEffect(() => {
-    // Remote session initialization updates state after its asynchronous response.
-    // eslint-disable-next-line react/react-compiler
-    void refreshAccount();
     const params = new URLSearchParams(location.search);
+    const clearAuthParams = () => {
+      const url = new URL(location.href);
+      for (const key of [
+        'code',
+        'error',
+        'error_code',
+        'error_description',
+        'token_hash',
+        'type',
+      ])
+        url.searchParams.delete(key);
+      history.replaceState(null, '', url.pathname + url.search + location.hash);
+    };
+    const code = params.get('code');
+    const authError = params.get('error_description') || params.get('error');
+    if (authError) {
+      clearAuthParams();
+      setTimeout(() => notice(authError), 0);
+      // Remote session initialization updates state after its asynchronous response.
+      // eslint-disable-next-line react/react-compiler
+      void refreshAccount();
+      return;
+    }
+    if (code) {
+      clearAuthParams();
+      void fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'exchange', code }),
+      })
+        .then(async (r) => {
+          const data = (await r.json()) as {
+            error?: string;
+            recovery?: boolean;
+          };
+          if (!r.ok) throw new Error(data.error);
+          location.hash = data.recovery ? 'settings' : 'today';
+          notice(
+            data.recovery
+              ? 'Email verified. Set a new password in Settings.'
+              : 'Email verified. You can now sync your workspace.',
+          );
+          await refreshAccount();
+        })
+        .catch((e) => notice(stringValue(e)));
+      return;
+    }
     const token = params.get('token_hash'),
       type = params.get('type');
     if (token && type) {
-      history.replaceState(null, '', location.pathname + location.hash);
+      clearAuthParams();
       void fetch('/api/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -329,7 +373,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           await refreshAccount();
         })
         .catch((e) => notice(stringValue(e)));
+      return;
     }
+    // Remote session initialization updates state after its asynchronous response.
+    // eslint-disable-next-line react/react-compiler
+    void refreshAccount();
   }, [refreshAccount, notice]);
   useEffect(() => {
     if (owner) {

@@ -51,6 +51,10 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       REMINDER_DISPATCH_SECRET: 'test-dispatch-secret',
     };
     let outage = false;
+    const pkceRequests: Array<{
+      path: 'signup' | 'recover';
+      payload: Record<string, string>;
+    }> = [];
     globalThis.fetch = async (input, init) => {
       const url =
         typeof input === 'string'
@@ -67,6 +71,38 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
             token_hash?: string;
           };
           const owner = payload.token_hash === 'owner-verification';
+          return Response.json({
+            access_token: owner ? 'valid-alice' : 'valid-intruder',
+            refresh_token: owner ? 'refresh-alice' : 'refresh-intruder',
+            user: {
+              id: owner ? 'alice' : 'intruder',
+              email: owner ? 'alice@example.test' : 'intruder@example.test',
+            },
+          });
+        }
+        if (
+          url.includes('/auth/v1/signup') ||
+          url.includes('/auth/v1/recover')
+        ) {
+          const path = url.includes('/auth/v1/signup') ? 'signup' : 'recover';
+          const rawBody = typeof init?.body === 'string' ? init.body : '{}';
+          pkceRequests.push({
+            path,
+            payload: JSON.parse(rawBody) as Record<string, string>,
+          });
+          return Response.json(
+            path === 'signup'
+              ? { id: 'alice', email: 'alice@example.test' }
+              : {},
+          );
+        }
+        if (url.includes('/auth/v1/token?grant_type=pkce')) {
+          const rawBody = typeof init?.body === 'string' ? init.body : '{}';
+          const payload = JSON.parse(rawBody) as {
+            auth_code?: string;
+            code_verifier?: string;
+          };
+          const owner = payload.auth_code !== 'intruder-code';
           return Response.json({
             access_token: owner ? 'valid-alice' : 'valid-intruder',
             refresh_token: owner ? 'refresh-alice' : 'refresh-intruder',
@@ -444,6 +480,122 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
     assert.equal(failClosedLogin.status, 503);
     assert.equal((await api.sync.POST(make(input))).status, 401);
     testEnvironment.STRIDE_OWNER_EMAIL = configuredOwnerEmail;
+    const ownerSignup = await api.auth.POST(
+      new Request('https://stride.test/api/auth', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://stride.test',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'signup',
+          email: 'alice@example.test',
+          password: 'owner-password',
+        }),
+      }),
+    );
+    assert.equal(ownerSignup.status, 200);
+    assert.equal(
+      ((await ownerSignup.json()) as { verifyEmail: boolean }).verifyEmail,
+      true,
+    );
+    const flowCookie = decodeURIComponent(
+      /stride_auth_flow=([^;]+)/.exec(
+        ownerSignup.headers.get('set-cookie') || '',
+      )?.[1] || '',
+    );
+    const [flowType, verifier] = flowCookie.split('.');
+    assert.equal(flowType, 'signup');
+    assert.match(verifier, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(pkceRequests.at(-1)?.path, 'signup');
+    assert.equal(pkceRequests.at(-1)?.payload.code_challenge_method, 's256');
+    const challenge = Buffer.from(
+      await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)),
+    ).toString('base64url');
+    assert.equal(pkceRequests.at(-1)?.payload.code_challenge, challenge);
+    const acceptedCodeExchange = await api.auth.POST(
+      new Request('https://stride.test/api/auth', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://stride.test',
+          'Content-Type': 'application/json',
+          Cookie: `stride_auth_flow=${encodeURIComponent(flowCookie)}`,
+        },
+        body: JSON.stringify({ action: 'exchange', code: 'owner-code' }),
+      }),
+    );
+    assert.equal(acceptedCodeExchange.status, 200);
+    assert.deepEqual(await acceptedCodeExchange.json(), {
+      ok: true,
+      recovery: false,
+    });
+    assert.match(
+      acceptedCodeExchange.headers.get('set-cookie') || '',
+      /stride_access=valid-alice/,
+    );
+    assert.match(
+      acceptedCodeExchange.headers.get('set-cookie') || '',
+      /stride_auth_flow=;.*Max-Age=0/,
+    );
+    const missingFlowExchange = await api.auth.POST(
+      new Request('https://stride.test/api/auth', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://stride.test',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'exchange', code: 'owner-code' }),
+      }),
+    );
+    assert.equal(missingFlowExchange.status, 400);
+    const rejectedCodeExchange = await api.auth.POST(
+      new Request('https://stride.test/api/auth', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://stride.test',
+          'Content-Type': 'application/json',
+          Cookie: `stride_auth_flow=${encodeURIComponent(flowCookie)}`,
+        },
+        body: JSON.stringify({ action: 'exchange', code: 'intruder-code' }),
+      }),
+    );
+    assert.equal(rejectedCodeExchange.status, 403);
+    const recoveryRequest = await api.auth.POST(
+      new Request('https://stride.test/api/auth', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://stride.test',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'recover',
+          email: 'alice@example.test',
+        }),
+      }),
+    );
+    assert.equal(recoveryRequest.status, 200);
+    assert.equal(pkceRequests.at(-1)?.path, 'recover');
+    const recoveryCookie = decodeURIComponent(
+      /stride_auth_flow=([^;]+)/.exec(
+        recoveryRequest.headers.get('set-cookie') || '',
+      )?.[1] || '',
+    );
+    assert.match(recoveryCookie, /^recovery\.[A-Za-z0-9_-]{43}$/);
+    const acceptedRecoveryExchange = await api.auth.POST(
+      new Request('https://stride.test/api/auth', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://stride.test',
+          'Content-Type': 'application/json',
+          Cookie: `stride_auth_flow=${encodeURIComponent(recoveryCookie)}`,
+        },
+        body: JSON.stringify({ action: 'exchange', code: 'recovery-code' }),
+      }),
+    );
+    assert.deepEqual(await acceptedRecoveryExchange.json(), {
+      ok: true,
+      recovery: true,
+    });
     const rejectedAccount = await api.auth.POST(
       new Request('https://stride.test/api/auth', {
         method: 'POST',
