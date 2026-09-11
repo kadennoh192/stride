@@ -19,7 +19,7 @@ import {
 } from '../lib/stride/storage';
 import { taskData } from '../lib/stride/types';
 
-void test('real D1 sync enforces account ownership, idempotence, durable scheduling, and outage handling', async () => {
+void test('real D1 sync and dispatch enforce ownership, idempotence, durable scheduling, and leased claims', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'stride-api-test-'));
   const mf = new Miniflare({
     modules: true,
@@ -44,6 +44,10 @@ void test('real D1 sync enforces account ownership, idempotence, durable schedul
       FILES,
       SUPABASE_URL: 'https://auth.stride.test',
       SUPABASE_ANON_KEY: 'test-public-key',
+      VAPID_PUBLIC_KEY: 'test-public-key',
+      VAPID_PRIVATE_KEY: 'test-private-key',
+      VAPID_SUBJECT: 'mailto:owner@stride.test',
+      REMINDER_DISPATCH_SECRET: 'test-dispatch-secret',
     };
     let outage = false;
     globalThis.fetch = async (input, init) => {
@@ -67,7 +71,7 @@ void test('real D1 sync enforces account ownership, idempotence, durable schedul
     await build({
       stdin: {
         contents:
-          "export * as upload from './app/api/files/[id]/upload/route'; export * as sync from './app/api/sync/route'; export * as auth from './app/api/auth/route'; export * as files from './app/api/files/[id]/route'; export * as reminders from './lib/server/reminders';",
+          "export * as upload from './app/api/files/[id]/upload/route'; export * as sync from './app/api/sync/route'; export * as auth from './app/api/auth/route'; export * as files from './app/api/files/[id]/route'; export * as dispatch from './app/api/reminders/route';",
         resolveDir: process.cwd(),
       },
       outfile: output,
@@ -92,6 +96,40 @@ void test('real D1 sync enforces account ownership, idempotence, durable schedul
       ],
     });
     const api = await import(pathToFileURL(output).href);
+    const dispatchRequest = async (
+      timestamp: string,
+      nonce: string,
+      body = '{}',
+    ) => {
+      const key = await crypto.subtle.importKey(
+        'raw',
+        new TextEncoder().encode('test-dispatch-secret'),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign'],
+      );
+      const signature = [
+        ...new Uint8Array(
+          await crypto.subtle.sign(
+            'HMAC',
+            key,
+            new TextEncoder().encode(`${timestamp}.${nonce}.${body}`),
+          ),
+        ),
+      ]
+        .map((value) => value.toString(16).padStart(2, '0'))
+        .join('');
+      return new Request('https://stride.test/api/reminders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Stride-Time': timestamp,
+          'X-Stride-Nonce': nonce,
+          'X-Stride-Signature': signature,
+        },
+        body,
+      });
+    };
     const state = blank('alice');
     applyEdits(
       state,
@@ -168,6 +206,62 @@ void test('real D1 sync enforces account ownership, idempotence, durable schedul
         )
       ).status,
       200,
+    );
+    const dispatchTime = String(Date.now());
+    const dispatchNonce = crypto.randomUUID();
+    const dispatch = await api.dispatch.POST(
+      await dispatchRequest(dispatchTime, dispatchNonce),
+    );
+    assert.equal(dispatch.status, 200);
+    assert.deepEqual(await dispatch.json(), { claimed: 0, sent: 0, failed: 0 });
+    assert.equal(
+      (
+        await api.dispatch.POST(
+          await dispatchRequest(dispatchTime, dispatchNonce),
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await api.dispatch.POST(
+          await dispatchRequest(
+            String(Date.now() - 121000),
+            crypto.randomUUID(),
+          ),
+        )
+      ).status,
+      403,
+    );
+    const due = Date.now() - 1000;
+    await DB.prepare(
+      "INSERT INTO reminder_jobs (id,owner,entity,due,original_due,state,lease) VALUES (?,?,?,?,?,'sending',?)",
+    )
+      .bind('expired-lease', 'alice', 'missing-task', due, due, due - 1)
+      .run();
+    const competing = await Promise.all([
+      api.dispatch.POST(
+        await dispatchRequest(String(Date.now()), crypto.randomUUID()),
+      ),
+      api.dispatch.POST(
+        await dispatchRequest(String(Date.now()), crypto.randomUUID()),
+      ),
+    ]);
+    const dispatchResults = (await Promise.all(
+      competing.map((response: Response) => response.json()),
+    )) as { claimed: number; sent: number; failed: number }[];
+    assert.equal(
+      dispatchResults.reduce(
+        (sum: number, result: { claimed: number }) => sum + result.claimed,
+        0,
+      ),
+      1,
+    );
+    assert.equal(
+      await DB.prepare(
+        "SELECT COUNT(*) AS n FROM reminder_jobs WHERE id='expired-lease' AND state='expired' AND lease=0",
+      ).first('n'),
+      1,
     );
     const malformed = structuredClone(input);
     malformed.changes[0].id = 'invalid-record';
