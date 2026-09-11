@@ -7,6 +7,7 @@ import {
   sendPush,
 } from '@/lib/server/reminders';
 import { dateKey, shiftDate, stringValue } from '@/lib/stride/types';
+import { habitLogId } from '@/lib/stride/habits';
 import { zonedInstant } from '@/lib/stride/domain';
 import type { PushSubscription as WebSubscription } from '@block65/webcrypto-web-push';
 export async function POST(request: Request) {
@@ -106,7 +107,7 @@ export async function POST(request: Request) {
         const day = dateKey(new Date(job.original_due), zone);
         const logged = await serverEntity(
           job.owner,
-          `habitlog-${entity.id}-${day}`,
+          await habitLogId(entity.id, day),
         );
         if (Number(logged?.data.value || 0) >= Number(entity.data.goal || 1)) {
           await database

@@ -52,7 +52,7 @@ actor WatchAPI {
         guard (200..<300).contains(http.statusCode) else {
             let message = (try? decoder.decode(ErrorResponse.self, from: data).error)
                 ?? "Stride is temporarily unavailable."
-            throw StoreError.server(message)
+            throw StoreError.server(status: http.statusCode, message: message)
         }
         do { return try decoder.decode(Output.self, from: data) }
         catch { throw StoreError.invalidResponse }

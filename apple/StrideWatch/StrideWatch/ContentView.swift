@@ -177,6 +177,9 @@ private struct SettingsView: View {
                 LabeledContent("Timezone", value: snapshot.timezone)
                 LabeledContent("Updated", value: snapshot.serverTime.prefix(16).replacingOccurrences(of: "T", with: " "))
             }
+            if model.pendingCount > 0 {
+                LabeledContent("Offline changes", value: String(model.pendingCount))
+            }
             Button("Disconnect", role: .destructive) { model.disconnect() }
         }
     }
