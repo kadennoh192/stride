@@ -4,9 +4,9 @@ Status: **development preview; full objective remains active**. Implemented sour
 
 ## Current evidence
 
-The automated suite covers version-one and version-two migrations; atomic writes and operation queues; owner isolation; restart ordering; concurrent saves; injected quota failure; field conflicts and deletion races; backup integrity, attachment bytes, and pre-restore recovery; task recurrence date arithmetic; timezone gaps/ambiguities; graph cycles; formula evaluation and short-circuiting; timer closure/restart; AI context boundaries and malformed responses; offline shell caching; and a local D1/R2 integration with mocked Auth responses.
+The automated suite covers version-one through version-three migrations; atomic writes and operation queues; owner isolation; restart ordering; concurrent saves; injected quota failure; field conflicts and deletion races; backup integrity, every entity kind, attachment-bearing blocks/rows/templates, and pre-restore recovery; task recurrence date arithmetic; timezone gaps/ambiguities; graph cycles; formula evaluation and short-circuiting; timer closure/restart; AI context boundaries and malformed responses; offline shell caching; and a local D1/R2 integration with mocked Auth responses.
 
-The last directly observed full test run passed 28 tests. Run the checks again against the exact source selected for publication. Local development logs are in ignored `outputs/qa/`, not included in the deployment.
+The last directly observed full test run passed 31 tests. Run the checks again against the exact source selected for publication. Local development logs are in ignored `outputs/qa/`, not included in the deployment.
 
 Production builds have succeeded during implementation. The build finalizer precaches local hashed bundles, including lazy feature modules. The first validated source was published privately at https://stride-workspace.mooeykadancow.chatgpt.site. Subsequent changes require their own successful build and publication results.
 
@@ -54,7 +54,7 @@ A 60,000-record synthetic IndexedDB fixture (10,000 tasks and 50,000 database ro
 | Templates/quiz/inspiration | Usable template actions, explainable suggestions, saved favorites | End-to-end activation and persistence |
 | Optional Gemini | Device key, model input, selected task/project context, editable preview | Live model/key failure testing and explicit ambiguous-date clarification workflow |
 | Customization | Theme modes/presets/accent, density, typography, nav order/visibility, backgrounds | Full custom theme controls, placement coverage, persisted layout preferences and contrast validation |
-| Complete backup/restore | Stream-friendly version-three archive with checksummed metadata and per-file hashes; compact code/JSON compatibility; staged validation and atomic recovery tests | Real-browser archive round-trip above 100 MB; full content matrix round-trip |
+| Complete backup/restore | Stream-friendly version-three archive with checksummed metadata and per-file hashes; compact code/JSON compatibility; staged validation and atomic recovery tests; automated round-trip of every entity kind and attachment-bearing blocks, rows and templates | Real-browser archive round-trip above 100 MB |
 | Accessibility | Semantic controls, focus drawer, reduced motion, chart data alternatives | Screen readers, 200% zoom, contrast, keyboard-only and touch walkthroughs |
 | Performance | Incremental field/operation writes, active-record and ID-keyset indexes, bounded pages, lazy editors; 10k-task/50k-row simulator diagnostic completed | Move UI/startup from full snapshots to paged reads; measure 10k tasks/50k rows and sub-100ms p50/p95 interactions on reference devices |
 | Staged release/monitoring | Additive migrations, deployment instructions, private audience preserved | Cloud backup/rollback exercise, final preview, operational metrics and alert delivery |
