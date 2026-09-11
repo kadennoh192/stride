@@ -20,7 +20,14 @@ import {
   Settings,
 } from 'lucide-react';
 import { useStride } from '@/lib/stride/store';
-import { uid, type Page, type Block, type BlockType } from '@/lib/stride/types';
+import { instantiatePageTemplate } from '@/lib/stride/templates';
+import {
+  uid,
+  type Page,
+  type Block,
+  type BlockType,
+  type Template,
+} from '@/lib/stride/types';
 import { safeURL, embedURL } from '@/lib/stride/domain';
 import { saveFile } from '@/lib/stride/storage';
 import { fileURL, downloadBlob } from '@/lib/stride/files';
@@ -523,7 +530,7 @@ export default function Pages({ pageId }: { pageId?: string }) {
     });
   };
   const templates = store.entities.filter(
-    (e) => e.kind === 'template' && e.data.type === 'page',
+    (e): e is Template => e.kind === 'template' && e.data.type === 'page',
   );
   if (!page)
     return (
@@ -565,26 +572,8 @@ export default function Pages({ pageId }: { pageId?: string }) {
                 className="secondary-button"
                 onClick={async () => {
                   const id = uid();
-                  const source = (t.data.pageTemplate ||
-                    t.data.page) as unknown as Page['data'];
-                  const list = t.data.blocks as Block['data'][];
                   await store.edit(
-                    [
-                      {
-                        id,
-                        kind: 'page',
-                        data: {
-                          ...source,
-                          parent: '',
-                          title: stringValue(t.data.title),
-                        },
-                      },
-                      ...list.map((b, i) => ({
-                        id: uid(),
-                        kind: 'block' as const,
-                        data: { ...b, page: id, order: i * 100 },
-                      })),
-                    ],
+                    instantiatePageTemplate(t, id, () => uid()),
                     'Created page from template',
                   );
                   location.assign('#' + `page/${id}`);

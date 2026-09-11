@@ -25,6 +25,7 @@ import {
   databaseRowValues,
 } from '@/lib/stride/database-values';
 import { saveFile } from '@/lib/stride/storage';
+import { instantiateRowTemplate } from '@/lib/stride/templates';
 import { fileURL, downloadBlob } from '@/lib/stride/files';
 import { Field, Select, ReorderButtons } from '../forms';
 import { Modal, Empty } from '../primitives';
@@ -1103,23 +1104,12 @@ export function DatabaseSurface({
               e.data.database === databaseId,
           )
           .map((t) => {
-            const row = t.data.row;
-            if (!row) return null;
-            const title =
-              typeof row.title === 'string' ? row.title : 'Untitled entry';
-            const values =
-              row.values && typeof row.values === 'object' ? row.values : {};
             return (
               <button
                 className="secondary-button"
                 key={t.id}
                 onClick={() =>
-                  void store.add('row', {
-                    ...row,
-                    database: databaseId,
-                    title,
-                    values,
-                  })
+                  void store.add('row', instantiateRowTemplate(t, databaseId))
                 }
               >
                 {stringValue(t.data.title)}
