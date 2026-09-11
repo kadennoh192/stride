@@ -50,6 +50,32 @@ const navigation = [
   'archive',
   'history',
 ];
+const customColors = [
+  ['workspaceBackground', 'Workspace background'],
+  ['surfaceColor', 'Cards and editors'],
+  ['textColor', 'Primary text'],
+  ['mutedColor', 'Subtle surfaces'],
+  ['mutedTextColor', 'Secondary text'],
+  ['borderColor', 'Borders'],
+  ['sidebarColor', 'Sidebar'],
+  ['accentSurfaceColor', 'Selected items'],
+] as const;
+function contrastRatio(left: string, right: string) {
+  const luminance = (hex: string) => {
+    const channels = [1, 3, 5].map((offset) =>
+      parseInt(hex.slice(offset, offset + 2), 16),
+    );
+    const linear = channels.map((channel) => {
+      const value = channel / 255;
+      return value <= 0.04045
+        ? value / 12.92
+        : ((value + 0.055) / 1.055) ** 2.4;
+    });
+    return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+  };
+  const values = [luminance(left), luminance(right)].sort((a, b) => b - a);
+  return (values[0] + 0.05) / (values[1] + 0.05);
+}
 export default function Settings() {
   const store = useStride();
   const [tab, setTab] = useState('appearance');
@@ -192,6 +218,10 @@ export default function Settings() {
     });
   const setting = (key: string, value: unknown) =>
     void store.setSettings({ [key]: value });
+  const textContrast = contrastRatio(
+    store.settings.workspaceBackground,
+    store.settings.textColor,
+  );
   return (
     <>
       <div className="page-heading">
@@ -258,7 +288,7 @@ export default function Settings() {
                   <Select
                     value={store.settings.theme}
                     onChange={(v) => setting('theme', v)}
-                    options={['light', 'dark', 'system']}
+                    options={['light', 'dark', 'system', 'custom']}
                   />
                 </Field>
                 <Field label="Custom accent">
@@ -314,6 +344,51 @@ export default function Settings() {
                   />
                 </Field>
               </div>
+              {store.settings.theme === 'custom' && (
+                <section
+                  className="custom-theme"
+                  aria-labelledby="palette-title"
+                >
+                  <h3 id="palette-title">Custom palette</h3>
+                  <div className="form-grid">
+                    {customColors.map(([key, label]) => (
+                      <Field key={key} label={label}>
+                        <input
+                          type="color"
+                          value={stringValue(store.settings[key])}
+                          onChange={(event) => setting(key, event.target.value)}
+                        />
+                      </Field>
+                    ))}
+                  </div>
+                  <output
+                    className={`contrast-status ${textContrast < 4.5 ? 'low' : ''}`}
+                    aria-live="polite"
+                  >
+                    Text contrast is {textContrast.toFixed(2)}:1.{' '}
+                    {textContrast >= 4.5
+                      ? 'This meets WCAG AA for normal text.'
+                      : 'Choose text and background colors with at least 4.5:1 contrast.'}
+                  </output>
+                  <button
+                    className="secondary-button"
+                    onClick={() =>
+                      void store.setSettings({
+                        workspaceBackground: '#ffffff',
+                        surfaceColor: '#ffffff',
+                        textColor: '#282c3b',
+                        mutedColor: '#f6f7fa',
+                        mutedTextColor: '#737888',
+                        borderColor: '#e9ebf0',
+                        sidebarColor: '#f8f9fc',
+                        accentSurfaceColor: '#edf0ff',
+                      })
+                    }
+                  >
+                    Reset custom palette
+                  </button>
+                </section>
+              )}
               <label className="checkline">
                 <input
                   type="checkbox"

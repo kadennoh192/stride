@@ -333,6 +333,14 @@ export interface Settings {
   name: string;
   theme: string;
   accent: string;
+  workspaceBackground: string;
+  surfaceColor: string;
+  textColor: string;
+  mutedColor: string;
+  mutedTextColor: string;
+  borderColor: string;
+  sidebarColor: string;
+  accentSurfaceColor: string;
   density: string;
   motion: boolean;
   rightPanel: boolean;
@@ -354,6 +362,14 @@ export const defaults: Settings = {
   name: '',
   theme: 'system',
   accent: '#5268e8',
+  workspaceBackground: '#ffffff',
+  surfaceColor: '#ffffff',
+  textColor: '#282c3b',
+  mutedColor: '#f6f7fa',
+  mutedTextColor: '#737888',
+  borderColor: '#e9ebf0',
+  sidebarColor: '#f8f9fc',
+  accentSurfaceColor: '#edf0ff',
   density: 'comfortable',
   motion: true,
   rightPanel: true,
