@@ -6,6 +6,7 @@ import {
   getLocalFile,
   load,
   materialize,
+  mergeFields,
   saveFile,
   transact,
   type Edit,
@@ -334,4 +335,75 @@ void test('complete archive restores every record kind and attachment-bearing st
       await (await getLocalFile(id, targetOwner))?.blob.text(),
       contents,
     );
+});
+
+void test('archive restore retains tombstones and both conflict alternatives', async () => {
+  const sourceOwner = 'conflict-archive-source';
+  const targetOwner = 'conflict-archive-target';
+  await transact(
+    (snapshot) =>
+      applyEdits(
+        snapshot,
+        [
+          {
+            id: 'conflicted-task',
+            kind: 'task',
+            data: taskData('Original title'),
+          },
+          {
+            id: 'deleted-page',
+            kind: 'page',
+            data: { title: 'Deleted page', icon: '', cover: '', parent: '' },
+          },
+        ],
+        'Created conflict fixture',
+      ),
+    sourceOwner,
+  );
+  const remote = structuredClone(await load(sourceOwner));
+  remote.device = 'remote-device';
+  applyEdits(
+    remote,
+    [{ id: 'conflicted-task', kind: 'task', data: { title: 'Remote title' } }],
+    'Remote edit',
+  );
+  await transact((snapshot) => {
+    applyEdits(
+      snapshot,
+      [{ id: 'conflicted-task', kind: 'task', data: { title: 'Local title' } }],
+      'Local edit',
+    );
+    mergeFields(snapshot, remote.outbox.at(-1)!.fields);
+    applyEdits(
+      snapshot,
+      [{ id: 'deleted-page', kind: 'page', data: { _deleted: true } }],
+      'Deleted page',
+    );
+  }, sourceOwner);
+
+  const source = await load(sourceOwner);
+  assert.equal(source.conflicts.length, 1);
+  assert.equal(
+    materialize(source.fields, true).find(
+      (record) => record.id === 'deleted-page',
+    )?.deleted,
+    true,
+  );
+  const archive = await exportBackupArchive(sourceOwner);
+  const staged = await stageBackupFile(archive.blob);
+  assert.deepEqual(staged.backup.snapshot.conflicts, source.conflicts);
+  await restoreBackup(staged, targetOwner);
+
+  const restored = await load(targetOwner);
+  assert.deepEqual(restored.conflicts, source.conflicts);
+  assert.equal(
+    materialize(restored.fields, true).find(
+      (record) => record.id === 'deleted-page',
+    )?.deleted,
+    true,
+  );
+  assert.equal(
+    materialize(restored.fields).some((record) => record.id === 'deleted-page'),
+    false,
+  );
 });
