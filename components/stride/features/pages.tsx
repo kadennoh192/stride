@@ -29,7 +29,7 @@ import {
   type Template,
 } from '@/lib/stride/types';
 import { safeURL, embedURL } from '@/lib/stride/domain';
-import { saveFile } from '@/lib/stride/storage';
+import { getLocalFile, saveFile } from '@/lib/stride/storage';
 import { fileURL, downloadBlob } from '@/lib/stride/files';
 import { Modal, Empty } from '../primitives';
 import { Field, Select, ReorderButtons } from '../forms';
@@ -203,35 +203,64 @@ function RichText({ block }: { block: Block }) {
 }
 function Attachment({ block }: { block: Block }) {
   const store = useStride();
-  const [url, setURL] = useState('');
-  const [error, setError] = useState('');
+  const attachmentKey = `${store.owner}:${block.data.file || ''}:${block.data.type}`;
+  const [resolved, setResolved] = useState({
+    key: '',
+    url: '',
+    availableOffline: false,
+    error: '',
+  });
+  const current =
+    resolved.key === attachmentKey
+      ? resolved
+      : { key: attachmentKey, url: '', availableOffline: false, error: '' };
   const [loading, setLoading] = useState(false);
   useEffect(() => {
     let active = true;
     let objectURL = '';
-    if (block.data.file && block.data.type === 'image')
-      void fileURL(block.data.file, store.owner)
+    if (block.data.file)
+      void (
+        block.data.type === 'image'
+          ? fileURL(block.data.file, store.owner)
+          : getLocalFile(block.data.file, store.owner)
+      )
         .then((u) => {
-          objectURL = u;
-          if (active) setURL(u);
-          else URL.revokeObjectURL(u);
+          if (!active) {
+            if (typeof u === 'string') URL.revokeObjectURL(u);
+            return;
+          }
+          if (typeof u === 'string') {
+            objectURL = u;
+          }
+          setResolved({
+            key: attachmentKey,
+            url: typeof u === 'string' ? u : '',
+            availableOffline: Boolean(u),
+            error: '',
+          });
         })
         .catch((e) => {
-          if (active) setError(stringValue(e));
+          if (active)
+            setResolved({
+              key: attachmentKey,
+              url: '',
+              availableOffline: false,
+              error: stringValue(e),
+            });
         });
     return () => {
       active = false;
       if (objectURL) URL.revokeObjectURL(objectURL);
     };
-  }, [block.data.file, block.data.type, store.owner]);
+  }, [attachmentKey, block.data.file, block.data.type, store.owner]);
   return (
     <div className="attachment-block">
-      {url &&
+      {current.url &&
         block.data.type === 'image' && (
           // Local Blob attachments are already on device and cannot use a server image optimizer.
           // eslint-disable-next-line next/no-img-element
           <img
-            src={url}
+            src={current.url}
             alt={block.data.text || block.data.name || 'Page image'}
             loading="lazy"
           />
@@ -243,14 +272,24 @@ function Attachment({ block }: { block: Block }) {
             disabled={loading}
             onClick={async () => {
               setLoading(true);
-              setError('');
+              setResolved({ ...current, error: '' });
               try {
                 const u = await fileURL(block.data.file!, store.owner);
                 const blob = await (await fetch(u)).blob();
                 downloadBlob(blob, block.data.name || 'attachment');
                 URL.revokeObjectURL(u);
+                setResolved({
+                  ...current,
+                  key: attachmentKey,
+                  availableOffline: true,
+                  error: '',
+                });
               } catch (e) {
-                setError(stringValue(e));
+                setResolved({
+                  ...current,
+                  key: attachmentKey,
+                  error: stringValue(e),
+                });
               } finally {
                 setLoading(false);
               }
@@ -261,7 +300,9 @@ function Attachment({ block }: { block: Block }) {
               : `Download ${block.data.name || 'attachment'}`}
           </button>
           <span className="muted">
-            {url ? 'Available offline' : 'Download to make available offline'}
+            {current.availableOffline
+              ? 'Available offline'
+              : 'Download to make available offline'}
           </span>
         </>
       ) : (
@@ -294,7 +335,7 @@ function Attachment({ block }: { block: Block }) {
           />
         </Field>
       )}
-      {error && <p className="form-error">{error}</p>}
+      {current.error && <p className="form-error">{current.error}</p>}
     </div>
   );
 }

@@ -50,6 +50,14 @@ export function stringValue(value: unknown): string {
   return JSON.stringify(value) ?? '';
 }
 
+export function countLabel(
+  count: number,
+  singular: string,
+  plural = `${singular}s`,
+) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
 export interface BaseEntity<K extends Kind, D extends Data> {
   id: string;
   kind: K;

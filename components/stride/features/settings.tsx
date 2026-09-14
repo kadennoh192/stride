@@ -1,5 +1,5 @@
 'use client';
-import { stringValue } from '@/lib/stride/types';
+import { countLabel, stringValue } from '@/lib/stride/types';
 
 import { useEffect, useState } from 'react';
 import {
@@ -510,9 +510,7 @@ export default function Settings() {
                       ? 'Local-only workspace · cloud sync is not active'
                       : `${store.snapshot?.outbox.length || 0} pending changes · last sync ${
                           store.snapshot?.lastSync
-                            ? new Date(
-                                store.snapshot.lastSync,
-                              ).toLocaleString()
+                            ? new Date(store.snapshot.lastSync).toLocaleString()
                             : 'not yet'
                         }`}
                   </p>
@@ -1112,8 +1110,9 @@ export default function Settings() {
                 <div className="inset-panel">
                   <h3>Ready to restore</h3>
                   <p>
-                    {staged.records} records · {staged.files.length} attachments
-                    · {(staged.bytes / 1000000).toFixed(1)} MB
+                    {countLabel(staged.records, 'record')} ·{' '}
+                    {countLabel(staged.files.length, 'attachment')} ·{' '}
+                    {(staged.bytes / 1000000).toFixed(1)} MB
                   </p>
                   <p className="muted">
                     Created {new Date(staged.backup.created).toLocaleString()}.
@@ -1151,8 +1150,9 @@ export default function Settings() {
             <>
               <h2>Storage & recovery</h2>
               <p className="muted">
-                Storage format {VERSION} · {store.entities.length} records ·{' '}
-                {store.history.length} activity events
+                Storage format {VERSION} ·{' '}
+                {countLabel(store.entities.length, 'record')} ·{' '}
+                {countLabel(store.history.length, 'activity event')}
               </p>
               <p className="muted">
                 {storage

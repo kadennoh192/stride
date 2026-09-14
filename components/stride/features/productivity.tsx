@@ -1,6 +1,6 @@
 'use client';
 import type { ActiveTimer } from '@/lib/stride/timer';
-import { stringValue } from '@/lib/stride/types';
+import { countLabel, stringValue } from '@/lib/stride/types';
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
@@ -1118,7 +1118,10 @@ export function Activity() {
             <span>{change.label}</span>
             <time>{new Date(change.at).toLocaleString()}</time>
             <span className="muted">
-              {new Set(change.fields.map((f) => f.entity)).size} records
+              {countLabel(
+                new Set(change.fields.map((f) => f.entity)).size,
+                'record',
+              )}
             </span>
           </div>
         ))}

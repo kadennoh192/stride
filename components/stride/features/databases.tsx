@@ -1,5 +1,5 @@
 'use client';
-import { databaseLayouts, stringValue } from '@/lib/stride/types';
+import { countLabel, databaseLayouts, stringValue } from '@/lib/stride/types';
 
 import { useState, useMemo } from 'react';
 import { Plus, Grid2X2, Settings, Trash2, ArrowLeft, Copy } from 'lucide-react';
@@ -690,7 +690,7 @@ export function DatabaseSurface({
       return display(value, store.entities);
     }
     if (p.type === 'files')
-      return `${Array.isArray(value) ? value.length : 0} files`;
+      return countLabel(Array.isArray(value) ? value.length : 0, 'file');
     return display(value, store.entities);
   };
   const renderList = (items: DatabaseRow[]) => (
@@ -726,7 +726,7 @@ export function DatabaseSurface({
             <div>
               <div className="eyebrow">CONNECTED INFORMATION</div>
               <h1>{database.data.title}</h1>
-              <p>{rows.length} entries</p>
+              <p>{countLabel(rows.length, 'entry', 'entries')}</p>
             </div>
             <div className="editor-toolbar">
               <button
@@ -1177,12 +1177,13 @@ export default function Databases({ databaseId }: { databaseId?: string }) {
               <Grid2X2 />
               <h3>{stringValue(d.data.title)}</h3>
               <p className="muted">
-                {
+                {countLabel(
                   store.entities.filter(
                     (e) => e.kind === 'row' && e.data.database === d.id,
-                  ).length
-                }{' '}
-                entries
+                  ).length,
+                  'entry',
+                  'entries',
+                )}
               </p>
             </a>
           ))}
