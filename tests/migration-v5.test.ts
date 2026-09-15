@@ -104,6 +104,7 @@ void test('version-five records gain bounded search indexes without reviving tom
 
   const { openDB, searchRecords } = await import('../lib/stride/storage');
   const database = await openDB();
+  assert.equal(database.objectStoreNames.contains('fileDeletes'), true);
   const recordsStore = database.transaction('records').objectStore('records');
   assert.equal(recordsStore.indexNames.contains('searchGrams'), true);
   assert.equal(

@@ -297,6 +297,11 @@ void test('complete archive restores every record kind and attachment-bearing st
       kind: 'favorite',
       data: { title: 'Protect focus time', tip: 3 },
     },
+    {
+      id: 'filePurge_old-file',
+      kind: 'fileTombstone',
+      data: { attachment: 'old-file' },
+    },
   ];
 
   await transact(

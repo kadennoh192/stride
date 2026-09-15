@@ -633,3 +633,204 @@ void test('a download only fills an empty cache and preserves a concurrently sav
   assert.equal(await missing.blob.text(), 'downloaded bytes');
   assert.equal(missing.uploaded, true);
 });
+
+void test('attachment deletion is queued atomically and local bytes are retained until cloud acknowledgment', async () => {
+  const { acknowledgeFileDelete, pendingFileDeletes } =
+    await import('../lib/stride/storage');
+  const owner = 'delete-queue';
+  await saveFile(
+    'private-file',
+    new Blob(['private bytes']),
+    owner,
+    'note.txt',
+  );
+  await transact(
+    (snapshot) =>
+      applyEdits(
+        snapshot,
+        [
+          {
+            id: 'filePurge_private-file',
+            kind: 'fileTombstone',
+            data: { attachment: 'private-file', _deleted: true },
+          },
+        ],
+        'Permanently removed attachment',
+      ),
+    owner,
+    false,
+    undefined,
+    ['private-file'],
+  );
+  assert.deepEqual(
+    (await pendingFileDeletes(owner)).map((entry) => entry.id),
+    ['private-file'],
+  );
+  assert.equal(
+    await (await getLocalFile('private-file', owner))!.blob.text(),
+    'private bytes',
+  );
+  const backupAfterRemoval = JSON.parse((await exportBackup(owner)).json) as {
+    files: unknown[];
+  };
+  assert.deepEqual(backupAfterRemoval.files, []);
+  const deletion = (await pendingFileDeletes(owner))[0];
+  await acknowledgeFileDelete(deletion);
+  assert.equal(await getLocalFile('private-file', owner), undefined);
+  assert.deepEqual(await pendingFileDeletes(owner), []);
+  await saveFile(
+    'private-file',
+    new Blob(['restored bytes']),
+    owner,
+    'note.txt',
+  );
+  assert.equal(
+    await (await getLocalFile('private-file', owner))!.blob.text(),
+    'restored bytes',
+  );
+});
+
+void test('a late deletion acknowledgment cannot remove a restored file', async () => {
+  const { acknowledgeFileDelete, pendingFileDeletes } =
+    await import('../lib/stride/storage');
+  const owner = 'delete-restore-race';
+  await saveFile('file', new Blob(['old bytes']), owner);
+  await transact(
+    (snapshot) =>
+      applyEdits(
+        snapshot,
+        [
+          {
+            id: 'filePurge_file',
+            kind: 'fileTombstone',
+            data: { attachment: 'file', _deleted: true },
+          },
+        ],
+        'Permanently removed attachment',
+      ),
+    owner,
+    false,
+    undefined,
+    ['file'],
+  );
+  const deletion = (await pendingFileDeletes(owner))[0];
+  await saveFile('file', new Blob(['restored bytes']), owner);
+  assert.equal(await acknowledgeFileDelete(deletion), false);
+  assert.equal(
+    await (await getLocalFile('file', owner))!.blob.text(),
+    'restored bytes',
+  );
+});
+
+void test('a restore-race response cancels deletion and requeues retained bytes', async () => {
+  const { pendingFileDeletes, uploadProgress } =
+    await import('../lib/stride/storage');
+  const { deleteRemoteFile } = await import('../lib/stride/files');
+  const owner = 'delete-remote-restore-race';
+  await saveFile('file', new Blob(['restored bytes']), owner);
+  await transact(
+    (snapshot) =>
+      applyEdits(
+        snapshot,
+        [
+          {
+            id: 'filePurge_file',
+            kind: 'fileTombstone',
+            data: { attachment: 'file', _deleted: true },
+          },
+        ],
+        'Permanently removed attachment',
+      ),
+    owner,
+    false,
+    undefined,
+    ['file'],
+  );
+  const deletion = (await pendingFileDeletes(owner))[0];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response('Attachment was restored', {
+      status: 409,
+      headers: { 'X-Stride-File-Deletion': 'cancelled' },
+    });
+  try {
+    await deleteRemoteFile(deletion);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.deepEqual(await pendingFileDeletes(owner), []);
+  assert.equal((await getLocalFile('file', owner))!.uploaded, false);
+  assert.equal(await uploadProgress('file', owner), undefined);
+});
+
+void test('restoring an older backup clears its purge marker and cancels queued deletion', async () => {
+  const { pendingFileDeletes } = await import('../lib/stride/storage');
+  const owner = 'restore-purged-attachment';
+  const backup = blank();
+  applyEdits(
+    backup,
+    [
+      {
+        id: 'page',
+        kind: 'page',
+        data: { title: 'Recovered page', icon: '', cover: '', parent: '' },
+      },
+      {
+        id: 'block',
+        kind: 'block',
+        data: {
+          page: 'page',
+          type: 'file',
+          order: 0,
+          file: 'file',
+          name: 'recovered.txt',
+        },
+      },
+    ],
+    'Backup fixture',
+  );
+  await saveFile('file', new Blob(['old bytes']), owner);
+  await transact(
+    (snapshot) =>
+      applyEdits(
+        snapshot,
+        [
+          {
+            id: 'filePurge_file',
+            kind: 'fileTombstone',
+            data: { attachment: 'file', _deleted: true },
+          },
+        ],
+        'Permanently removed attachment',
+      ),
+    owner,
+    false,
+    undefined,
+    ['file'],
+  );
+  await restoreSnapshot(
+    backup,
+    [
+      {
+        id: 'file',
+        owner,
+        blob: new Blob(['restored bytes']),
+        hash: '',
+        name: 'recovered.txt',
+        uploaded: false,
+      },
+    ],
+    owner,
+  );
+  assert.deepEqual(await pendingFileDeletes(owner), []);
+  assert.equal(
+    materialize((await load(owner)).fields).some(
+      (entity) => entity.kind === 'block' && entity.data.file === 'file',
+    ),
+    true,
+  );
+  assert.equal(
+    await (await getLocalFile('file', owner))!.blob.text(),
+    'restored bytes',
+  );
+});

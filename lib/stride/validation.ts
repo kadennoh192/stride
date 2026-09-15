@@ -27,6 +27,7 @@ export const kinds: Kind[] = [
   'completion',
   'template',
   'favorite',
+  'fileTombstone',
 ];
 const id = /^[a-zA-Z0-9_-]{1,150}$/;
 const stamp = /^\d{15}-[a-zA-Z0-9-]{1,100}$/;
@@ -473,6 +474,10 @@ function validateShape(e: EntityCandidate) {
     case 'favorite':
       if (!finite(d.tip, 0, 10000) || !Number.isInteger(d.tip))
         invalid('Invalid favorite');
+      break;
+    case 'fileTombstone':
+      if (typeof d.attachment !== 'string' || !id.test(d.attachment))
+        invalid('Invalid attachment removal marker');
       break;
     case 'settings':
       optional(d, 'name', (v) => typeof v === 'string' && v.length <= 100);

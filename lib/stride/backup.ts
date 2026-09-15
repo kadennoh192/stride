@@ -97,7 +97,8 @@ async function bounded(stream: ReadableStream<Uint8Array>, limit: number) {
 }
 async function captureComplete(owner: string) {
   const { snapshot, files: local } = await captureWorkspace(owner);
-  for (const id of attachmentReferences(snapshot))
+  const references = attachmentReferences(snapshot);
+  for (const id of references)
     if (!local.some((f) => f.id === id)) {
       const url = await fileURL(id, owner);
       URL.revokeObjectURL(url);
@@ -115,7 +116,9 @@ async function captureComplete(owner: string) {
       device: 'backup',
       lastSync: '',
     },
-    files: local,
+    // Bytes awaiting permanent cloud cleanup are deliberately not recoverable
+    // through backups made after their synced tombstone was written.
+    files: local.filter((file) => references.has(file.id)),
     created: new Date().toISOString(),
   };
 }
@@ -239,7 +242,8 @@ function validateEnvelope(value: unknown) {
     snapshot.owner.length > 150 ||
     typeof snapshot.initialized !== 'boolean' ||
     typeof snapshot.lastSync !== 'string' ||
-    (snapshot.lastSync !== '' && !Number.isFinite(Date.parse(snapshot.lastSync)))
+    (snapshot.lastSync !== '' &&
+      !Number.isFinite(Date.parse(snapshot.lastSync)))
   )
     throw new Error('Unsupported or incomplete backup');
   if (
@@ -341,10 +345,7 @@ export async function stageBackup(input: string): Promise<StagedBackup> {
   const ids = new Set<string>();
   let bytes = 0;
   for (const f of parsed.files) {
-    if (
-      !validFileMetadata(f, ids) ||
-      typeof f.bytes !== 'string'
-    )
+    if (!validFileMetadata(f, ids) || typeof f.bytes !== 'string')
       throw new Error('Invalid attachment metadata');
     ids.add(f.id);
     const raw = decodeBytes(f.bytes);

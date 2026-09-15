@@ -3,8 +3,10 @@ import type { Snapshot } from './storage';
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
-/** All recoverable versions need bytes, including deleted records and saved templates. */
-export function attachmentReferences(snapshot: Snapshot): Set<string> {
+function collectAttachmentReferences(
+  snapshot: Snapshot,
+  includeRecoverable: boolean,
+): Set<string> {
   const ids = new Set<string>();
   const file = (value: unknown) => {
     if (typeof value === 'string' && value) ids.add(value);
@@ -33,11 +35,36 @@ export function attachmentReferences(snapshot: Snapshot): Set<string> {
     }
   };
   Object.values(snapshot.fields).forEach(visit);
-  for (const change of [...snapshot.history, ...snapshot.outbox])
-    change.fields.forEach(visit);
-  for (const conflict of snapshot.conflicts) {
-    visit(conflict.local);
-    visit(conflict.remote);
+  if (includeRecoverable) {
+    for (const change of [...snapshot.history, ...snapshot.outbox])
+      change.fields.forEach(visit);
+    for (const conflict of snapshot.conflicts) {
+      visit(conflict.local);
+      visit(conflict.remote);
+    }
   }
   return ids;
+}
+
+/** All recoverable versions need bytes, including deleted records and saved templates. */
+export function attachmentReferences(snapshot: Snapshot): Set<string> {
+  const ids = collectAttachmentReferences(snapshot, true);
+  for (const field of Object.values(snapshot.fields))
+    if (
+      field.kind === 'fileTombstone' &&
+      field.key === 'attachment' &&
+      typeof field.value === 'string'
+    )
+      ids.delete(field.value);
+  return ids;
+}
+
+/** Current references only, used to prevent removing bytes shared by another record. */
+export function currentAttachmentReferences(
+  snapshot: Snapshot,
+  ignoredFieldKey = '',
+): Set<string> {
+  const current = structuredClone(snapshot);
+  if (ignoredFieldKey) delete current.fields[ignoredFieldKey];
+  return collectAttachmentReferences(current, false);
 }

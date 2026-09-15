@@ -1,7 +1,10 @@
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attachmentReferences } from '../lib/stride/attachment-references';
+import {
+  attachmentReferences,
+  currentAttachmentReferences,
+} from '../lib/stride/attachment-references';
 import {
   blank,
   applyEdits,
@@ -130,4 +133,61 @@ void test('backup staging requires bytes for historical attachments and rejects 
   await assert.rejects(stageBackup(JSON.stringify(invalid)), /metadata/);
   assert.equal((await load(owner)).history.length, 2);
   await closeStorage();
+});
+
+void test('an explicit attachment tombstone excludes permanently removed bytes from backups', () => {
+  const state = blank('owner');
+  applyEdits(
+    state,
+    [
+      {
+        id: 'block',
+        kind: 'block',
+        data: { page: 'page', type: 'file', order: 0, file: 'private-file' },
+      },
+    ],
+    'Attached',
+  );
+  applyEdits(
+    state,
+    [
+      { id: 'block', kind: 'block', data: { file: '' } },
+      {
+        id: 'filePurge_private-file',
+        kind: 'fileTombstone',
+        data: { attachment: 'private-file', _deleted: true },
+      },
+    ],
+    'Permanently removed attachment',
+  );
+  assert.equal(attachmentReferences(state).has('private-file'), false);
+});
+
+void test('a stale purge marker cannot hide another current attachment reference', () => {
+  const state = blank('owner');
+  applyEdits(
+    state,
+    [
+      {
+        id: 'first-block',
+        kind: 'block',
+        data: { page: 'page', type: 'file', order: 0, file: 'shared-file' },
+      },
+      {
+        id: 'second-block',
+        kind: 'block',
+        data: { page: 'page', type: 'file', order: 1, file: 'shared-file' },
+      },
+      {
+        id: 'filePurge_shared-file',
+        kind: 'fileTombstone',
+        data: { attachment: 'shared-file', _deleted: true },
+      },
+    ],
+    'Fixture',
+  );
+  assert.equal(
+    currentAttachmentReferences(state, 'first-block:file').has('shared-file'),
+    true,
+  );
 });

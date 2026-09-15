@@ -1928,6 +1928,9 @@ td select {
 .page-block:hover .block-controls {
   opacity: 1;
 }
+.attachment-remove-button {
+  min-height: 44px;
+}
 .block-controls select {
   font-size: 12px;
   min-height: 28px;

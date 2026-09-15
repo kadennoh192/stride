@@ -215,6 +215,7 @@ function Attachment({ block }: { block: Block }) {
       ? resolved
       : { key: attachmentKey, url: '', availableOffline: false, error: '' };
   const [loading, setLoading] = useState(false);
+  const [removing, setRemoving] = useState(false);
   useEffect(() => {
     let active = true;
     let objectURL = '';
@@ -304,6 +305,26 @@ function Attachment({ block }: { block: Block }) {
               ? 'Available offline'
               : 'Download to make available offline'}
           </span>
+          <button
+            className="subtle-button danger attachment-remove-button"
+            disabled={removing}
+            onClick={async () => {
+              if (
+                confirm(
+                  'Permanently remove this file from Stride and future backups? If you are offline, secure cloud and device cleanup will finish when you reconnect. Only an older backup made before removal could recover it.',
+                )
+              ) {
+                setRemoving(true);
+                try {
+                  await store.removeAttachment(block);
+                } finally {
+                  setRemoving(false);
+                }
+              }
+            }}
+          >
+            {removing ? 'Saving removal…' : 'Remove file permanently'}
+          </button>
         </>
       ) : (
         <Field

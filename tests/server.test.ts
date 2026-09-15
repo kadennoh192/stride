@@ -710,6 +710,156 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
     assert.equal(await downloaded.text(), 'attachment bytes');
     assert.equal(downloaded.headers.get('X-Content-SHA256'), digest);
     assert.equal(downloaded.headers.get('Cache-Control'), 'private, no-store');
+    assert.equal(
+      (
+        await api.files.DELETE(
+          new Request(upload.url, {
+            method: 'DELETE',
+            headers: { Cookie: 'stride_access=valid-alice' },
+          }),
+          { params: Promise.resolve({ id: 'test-file' }) },
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await api.files.DELETE(
+          new Request(upload.url, {
+            method: 'DELETE',
+            headers: {
+              Origin: 'https://stride.test',
+              Cookie: 'stride_access=valid-alice',
+            },
+          }),
+          { params: Promise.resolve({ id: 'test-file' }) },
+        )
+      ).status,
+      409,
+    );
+    assert.equal(
+      (
+        await api.files.DELETE(
+          new Request(upload.url, {
+            method: 'DELETE',
+            headers: {
+              Origin: 'https://stride.test',
+              Cookie: 'stride_access=valid-alice',
+              'X-Stride-Owner': 'alice',
+            },
+          }),
+          { params: Promise.resolve({ id: 'test-file' }) },
+        )
+      ).status,
+      409,
+    );
+    await DB.prepare(
+      'INSERT INTO fields (owner,entity,kind,key,value,stamp) VALUES (?,?,?,?,?,?)',
+    )
+      .bind(
+        'alice',
+        'filePurge_test-file',
+        'fileTombstone',
+        'attachment',
+        JSON.stringify('test-file'),
+        '000000000000001-test',
+      )
+      .run();
+    await FILES.put(
+      '__stride_uploads/alice/test-file/hash/manifest',
+      'temporary',
+    );
+    const deleteRequest = () =>
+      new Request(upload.url, {
+        method: 'DELETE',
+        headers: {
+          Origin: 'https://stride.test',
+          Cookie: 'stride_access=valid-alice',
+          'X-Stride-Owner': 'alice',
+        },
+      });
+    assert.equal(
+      (
+        await api.files.DELETE(deleteRequest(), {
+          params: Promise.resolve({ id: 'test-file' }),
+        })
+      ).status,
+      204,
+    );
+    assert.equal(
+      (
+        await api.files.DELETE(deleteRequest(), {
+          params: Promise.resolve({ id: 'test-file' }),
+        })
+      ).status,
+      204,
+    );
+    await DB.prepare(
+      "UPDATE fields SET value=? WHERE owner=? AND entity=? AND key='attachment'",
+    )
+      .bind(JSON.stringify(''), 'alice', 'filePurge_test-file')
+      .run();
+    const restoredDeletion = await api.files.DELETE(deleteRequest(), {
+      params: Promise.resolve({ id: 'test-file' }),
+    });
+    assert.equal(restoredDeletion.status, 409);
+    assert.equal(
+      restoredDeletion.headers.get('X-Stride-File-Deletion'),
+      'cancelled',
+    );
+    await DB.prepare(
+      'INSERT INTO fields (owner,entity,kind,key,value,stamp) VALUES (?,?,?,?,?,?)',
+    )
+      .bind(
+        'alice',
+        'filePurge_race-file',
+        'fileTombstone',
+        'attachment',
+        JSON.stringify('race-file'),
+        '000000000000002-test',
+      )
+      .run();
+    await FILES.put('alice/race-file', 'old bytes');
+    const testEnv = globals.__strideTestEnv as { FILES: unknown };
+    testEnv.FILES = {
+      delete: async (keys: string | string[]) => {
+        await FILES.delete(keys);
+        if (keys === 'alice/race-file')
+          await DB.prepare(
+            "UPDATE fields SET value=? WHERE owner=? AND entity=? AND key='attachment'",
+          )
+            .bind(JSON.stringify(''), 'alice', 'filePurge_race-file')
+            .run();
+      },
+      list: (options?: R2ListOptions) => FILES.list(options),
+    };
+    let racedDeletion: Response;
+    try {
+      racedDeletion = await api.files.DELETE(
+        new Request('https://stride.test/api/files/race-file', {
+          method: 'DELETE',
+          headers: {
+            Origin: 'https://stride.test',
+            Cookie: 'stride_access=valid-alice',
+            'X-Stride-Owner': 'alice',
+          },
+        }),
+        { params: Promise.resolve({ id: 'race-file' }) },
+      );
+    } finally {
+      testEnv.FILES = FILES;
+    }
+    assert.equal(racedDeletion.status, 409);
+    assert.equal(
+      racedDeletion.headers.get('X-Stride-File-Deletion'),
+      'cancelled',
+    );
+    assert.equal(await FILES.head('alice/race-file'), null);
+    assert.equal(await FILES.head('alice/test-file'), null);
+    assert.equal(
+      await FILES.head('__stride_uploads/alice/test-file/hash/manifest'),
+      null,
+    );
     const payload = new Uint8Array(2_400_123);
     for (let i = 0; i < payload.length; i++) payload[i] = i % 251;
     await saveFile(

@@ -35,10 +35,14 @@ import {
   type Edit,
   addStarter,
   allFiles,
+  acknowledgeFileDelete,
+  pendingFileDeletes,
   startupProjection,
   searchRecords,
 } from './storage';
 import { uploadFile } from './upload';
+import { deleteRemoteFile } from './files';
+import { currentAttachmentReferences } from './attachment-references';
 import { completionEdits } from './completion';
 interface Account {
   configured: boolean;
@@ -71,6 +75,7 @@ interface Store {
     label?: string,
   ) => Promise<void>;
   remove: (e: Entity) => Promise<void>;
+  removeAttachment: (e: EntityOf<'block'>) => Promise<void>;
   complete: (task: Task) => Promise<void>;
   undo: () => Promise<void>;
   canUndo: boolean;
@@ -196,7 +201,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const sync = useCallback(async () => {
     if (!owner || working.current) return;
     if (owner === 'guest') {
-      setSyncStatus('Saved on this device');
+      try {
+        for (const deletion of await pendingFileDeletes(owner))
+          await acknowledgeFileDelete(deletion);
+        setSyncStatus('Saved on this device');
+      } catch (e) {
+        setSyncStatus('Saved on device · cleanup needs another try');
+        setError(stringValue(e));
+      }
       return;
     }
     if (!navigator.onLine) {
@@ -269,6 +281,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         again = state.outbox.length > 0 || data.more === true;
       }
+      if (!state.outbox.length)
+        for (const deletion of await pendingFileDeletes(owner)) {
+          if (currentOwner.current !== owner) return;
+          setSyncStatus('Removing attachment from cloud…');
+          await deleteRemoteFile(deletion);
+        }
       for (const file of (await allFiles(owner)).filter(
         (file) => !file.uploaded,
       )) {
@@ -298,7 +316,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         Date.now() +
         Math.min(300000, 2000 * 2 ** Math.min(8, failures.current));
       setSyncStatus('Saved on device · waiting to retry');
-      if (stringValue(e).includes('account')) setError(stringValue(e));
+      if (stringValue(e).toLowerCase().includes('account'))
+        setError(stringValue(e));
     } finally {
       working.current = false;
     }
@@ -684,6 +703,55 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             `Deleted ${stringValue(e.data.title || e.kind)}`,
           );
           notice('Moved to trash. Undo is available.');
+        },
+        removeAttachment: async (block) => {
+          const id = stringValue(block.data.file);
+          if (!id || !fullSnapshot) return;
+          if (
+            currentAttachmentReferences(fullSnapshot, `${block.id}:file`).has(
+              id,
+            )
+          )
+            throw new Error(
+              'This attachment is also used elsewhere. Remove those references first.',
+            );
+          const state = await transact(
+            (snapshot) =>
+              applyEdits(
+                snapshot,
+                [
+                  {
+                    id: block.id,
+                    kind: 'block',
+                    data: { file: '', name: '' },
+                  },
+                  {
+                    id: `filePurge_${id}`,
+                    kind: 'fileTombstone',
+                    data: { attachment: id, _deleted: true },
+                  },
+                ],
+                'Permanently removed attachment',
+              ),
+            owner,
+            false,
+            undefined,
+            [id],
+          );
+          if (currentOwner.current === owner) {
+            loadedOwner.current = owner;
+            setSnapshot(state);
+            setStartup(null);
+            setUndoEdits([]);
+            setError('');
+            notice(
+              owner === 'guest'
+                ? 'Attachment removed from this device and future backups.'
+                : 'Removal saved on this device. Secure cleanup will finish after cloud sync.',
+            );
+            void sync();
+          }
+          broadcast.current?.postMessage({ owner });
         },
         complete,
         undo: async () => {

@@ -19,7 +19,7 @@ import {
   shiftDate,
 } from './types';
 import { validateEntity, validateGraph, validField } from './validation';
-export const VERSION = 6;
+export const VERSION = 7;
 export const SNAPSHOT_VERSION = 2;
 export interface Snapshot {
   version: number;
@@ -86,7 +86,7 @@ function metadata(snapshot: Snapshot, revision: number): StoredMeta {
   return { ...meta, revision };
 }
 function createStores(db: IDBDatabase) {
-  for (const name of ['state', 'files', 'recovery', 'fileQueue'])
+  for (const name of ['state', 'files', 'recovery', 'fileQueue', 'fileDeletes'])
     if (!db.objectStoreNames.contains(name)) db.createObjectStore(name);
   if (!db.objectStoreNames.contains('records')) {
     const records = db.createObjectStore('records', {
@@ -426,13 +426,16 @@ export async function transact(
   owner = 'guest',
   recover = false,
   files?: LocalFile[],
+  deleteFiles?: string[],
 ): Promise<Snapshot> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const stores = [
       ...CORE_STORES,
       ...(recover ? ['recovery'] : []),
-      ...(recover || files ? ['files', 'fileQueue'] : []),
+      ...(recover || files || deleteFiles
+        ? ['files', 'fileQueue', 'fileDeletes']
+        : []),
     ];
     const tx = db.transaction(stores, 'readwrite');
     let result: Snapshot,
@@ -538,6 +541,21 @@ export async function transact(
             `${owner}:${f.id}`,
           );
           tx.objectStore('fileQueue').put(f.id, `${owner}:${f.id}`);
+          tx.objectStore('fileDeletes').delete(`${owner}:${f.id}`);
+        }
+        for (const id of deleteFiles || []) {
+          const key = `${owner}:${id}`;
+          tx.objectStore('fileQueue').delete(key);
+          tx.objectStore('fileDeletes').put(
+            {
+              id,
+              owner,
+              revision: uid(),
+              state: 'pending',
+              updatedAt: Date.now(),
+            } satisfies FileDelete,
+            key,
+          );
         }
       } catch (e) {
         reason = e;
@@ -1063,6 +1081,13 @@ export interface LocalFile {
   uploaded: boolean;
   owner: string;
 }
+export interface FileDelete {
+  revision: string;
+  id: string;
+  owner: string;
+  state: 'pending' | 'complete';
+  updatedAt: number;
+}
 export async function hashBlob(blob: Blob) {
   const bytes = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
   return [...new Uint8Array(bytes)]
@@ -1081,15 +1106,114 @@ export async function saveFile(
   const hash = await hashBlob(blob);
   const db = await openDB();
   return new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(['files', 'fileQueue'], 'readwrite');
+    const tx = db.transaction(
+      ['files', 'fileQueue', 'fileDeletes'],
+      'readwrite',
+    );
     tx.objectStore('files').put(
       { id, blob, hash, name, uploaded, owner, revision: uid() },
       `${owner}:${id}`,
     );
     if (!uploaded) tx.objectStore('fileQueue').put(id, `${owner}:${id}`);
     else tx.objectStore('fileQueue').delete(`${owner}:${id}`);
+    tx.objectStore('fileDeletes').delete(`${owner}:${id}`);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(new Error('Unable to store attachment.'));
+  });
+}
+export async function pendingFileDeletes(owner: string) {
+  const db = await openDB();
+  return new Promise<FileDelete[]>((resolve, reject) => {
+    const result: FileDelete[] = [];
+    const request = db
+      .transaction('fileDeletes')
+      .objectStore('fileDeletes')
+      .openCursor();
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) {
+        resolve(result);
+        return;
+      }
+      const value = cursor.value as FileDelete;
+      if (value.owner === owner && value.state === 'pending')
+        result.push(value);
+      cursor.continue();
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+export async function acknowledgeFileDelete(original: FileDelete) {
+  const db = await openDB();
+  return new Promise<boolean>((resolve, reject) => {
+    const tx = db.transaction(
+      ['files', 'fileQueue', 'fileDeletes'],
+      'readwrite',
+    );
+    const key = `${original.owner}:${original.id}`;
+    let unchanged = false;
+    const request = tx.objectStore('fileDeletes').get(key);
+    request.onsuccess = () => {
+      const current = request.result as FileDelete | undefined;
+      if (
+        !current ||
+        current.state !== 'pending' ||
+        current.revision !== original.revision
+      )
+        return;
+      unchanged = true;
+      tx.objectStore('files').delete(key);
+      tx.objectStore('fileQueue').delete(key);
+      tx.objectStore('fileDeletes').put(
+        { ...current, state: 'complete', updatedAt: Date.now() },
+        key,
+      );
+    };
+    tx.oncomplete = () => resolve(unchanged);
+    tx.onabort = tx.onerror = () =>
+      reject(
+        new Error(
+          'Cloud removal succeeded, but local cleanup will retry safely.',
+        ),
+      );
+  });
+}
+/** A restore supersedes a queued deletion and makes the retained bytes uploadable again. */
+export async function cancelFileDelete(original: FileDelete) {
+  const db = await openDB();
+  return new Promise<boolean>((resolve, reject) => {
+    const tx = db.transaction(
+      ['files', 'fileQueue', 'fileDeletes'],
+      'readwrite',
+    );
+    const key = `${original.owner}:${original.id}`;
+    let restored = false;
+    const deletionRequest = tx.objectStore('fileDeletes').get(key);
+    deletionRequest.onsuccess = () => {
+      const current = deletionRequest.result as FileDelete | undefined;
+      if (
+        !current ||
+        current.state !== 'pending' ||
+        current.revision !== original.revision
+      )
+        return;
+      const fileRequest = tx.objectStore('files').get(key);
+      fileRequest.onsuccess = () => {
+        const file = fileRequest.result as LocalFile | undefined;
+        if (!file) return;
+        restored = true;
+        tx.objectStore('files').put({ ...file, uploaded: false }, key);
+        tx.objectStore('fileQueue').put(file.id, key);
+        tx.objectStore('fileDeletes').delete(key);
+      };
+    };
+    tx.oncomplete = () => resolve(restored);
+    tx.onabort = tx.onerror = () =>
+      reject(
+        new Error(
+          'The restored attachment is safe on this device, but its upload could not be queued. Please retry.',
+        ),
+      );
   });
 }
 export async function getLocalFile(
@@ -1151,6 +1275,12 @@ export async function restoreSnapshot(
           data: { ...cleared, ...e.data, _deleted: !!e.deleted },
         } as Edit);
       }
+      for (const file of files)
+        edits.push({
+          id: `filePurge_${file.id}`,
+          kind: 'fileTombstone',
+          data: { attachment: '', _deleted: true },
+        });
       applyEdits(current, edits, 'Restored backup');
       const known = new Set(current.history.map((c) => c.id));
       current.history.push(...snapshot.history.filter((c) => !known.has(c.id)));

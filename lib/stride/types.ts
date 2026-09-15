@@ -14,7 +14,8 @@ export type Kind =
   | 'comment'
   | 'completion'
   | 'template'
-  | 'favorite';
+  | 'favorite'
+  | 'fileTombstone';
 export interface Data {
   [key: string]: unknown;
   title?: string;
@@ -327,6 +328,10 @@ export type Favorite = BaseEntity<
     [key: string]: unknown;
   }
 >;
+export type FileTombstone = BaseEntity<
+  'fileTombstone',
+  { attachment: string; [key: string]: unknown }
+>;
 export type Entity =
   | Task
   | Project
@@ -343,7 +348,8 @@ export type Entity =
   | Comment
   | Completion
   | Template
-  | Favorite;
+  | Favorite
+  | FileTombstone;
 export type EntityOf<K extends Kind> = Extract<Entity, { kind: K }>;
 export type EntityData<K extends Kind> = EntityOf<K>['data'];
 export type EntityPatch<K extends Kind> = Partial<EntityData<K>> & Data;
