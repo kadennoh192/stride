@@ -123,7 +123,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
     await build({
       stdin: {
         contents:
-          "export * as upload from './app/api/files/[id]/upload/route'; export * as sync from './app/api/sync/route'; export * as auth from './app/api/auth/route'; export * as files from './app/api/files/[id]/route'; export * as push from './app/api/push/route'; export * as dispatch from './app/api/reminders/route'; export * as watchPair from './app/api/watch/pair/route'; export * as watch from './app/api/watch/route';",
+          "export * as upload from './app/api/files/[id]/upload/route'; export * as sync from './app/api/sync/route'; export * as auth from './app/api/auth/route'; export * as files from './app/api/files/[id]/route'; export * as push from './app/api/push/route'; export * as dispatch from './app/api/reminders/route'; export * as watchPair from './app/api/watch/pair/route'; export * as watch from './app/api/watch/route'; export * as time from './app/api/time/route';",
         resolveDir: process.cwd(),
       },
       outfile: output,
@@ -148,6 +148,12 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       ],
     });
     const api = await import(pathToFileURL(output).href);
+    const timeResponse = await api.time.GET();
+    const timePayload = await timeResponse.json();
+    assert.equal(timeResponse.status, 200);
+    assert.equal(timePayload.source, 'stride-edge');
+    assert.equal(typeof timePayload.epochMs, 'number');
+    assert.match(timeResponse.headers.get('cache-control') || '', /no-store/);
     const dispatchRequest = async (
       timestamp: string,
       nonce: string,

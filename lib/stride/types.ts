@@ -375,6 +375,7 @@ export interface Settings {
   hidden: string[];
   navOrder: string[];
   timezone: string;
+  clockTimezone: 'workspace' | 'device' | 'utc';
   focusMinutes: number;
   breakMinutes: number;
   longBreakMinutes: number;
@@ -408,6 +409,7 @@ export const defaults: Settings = {
   hidden: [],
   navOrder: [],
   timezone: '',
+  clockTimezone: 'workspace',
   focusMinutes: 25,
   breakMinutes: 5,
   longBreakMinutes: 15,

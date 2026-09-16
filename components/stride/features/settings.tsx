@@ -359,6 +359,17 @@ export default function Settings() {
                     onChange={(e) => setting('timezone', e.target.value)}
                   />
                 </Field>
+                <Field label="Clock timezone">
+                  <Select
+                    value={store.settings.clockTimezone}
+                    onChange={(v) => setting('clockTimezone', v)}
+                    options={[
+                      { value: 'workspace', label: 'Workspace' },
+                      { value: 'device', label: 'This device' },
+                      { value: 'utc', label: 'UTC' },
+                    ]}
+                  />
+                </Field>
                 <Field label="Daily task goal">
                   <input
                     type="number"

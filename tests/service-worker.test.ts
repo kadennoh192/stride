@@ -58,6 +58,7 @@ void test('offline shell preserves build consistency, excludes account APIs, and
   let response: Promise<Response> | undefined;
   for (const request of [
     new Request('https://stride.test/api/sync'),
+    new Request('https://stride.test/api/time'),
     new Request('https://stride.test/', { headers: { RSC: '1' } }),
   ])
     handlers.get('fetch')!({

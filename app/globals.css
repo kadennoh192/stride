@@ -278,6 +278,42 @@
   align-items: center;
   color: var(--muted-foreground);
 }
+.topbar-breadcrumb {
+  min-width: 0;
+}
+.topbar-actions {
+  flex: 0 0 auto;
+}
+.stride-clock {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+  color: var(--foreground);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+  white-space: nowrap;
+}
+.stride-clock svg {
+  width: 14px;
+  height: 14px;
+  color: var(--muted-foreground);
+}
+.clock-status {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--good);
+}
+.clock-status.checking {
+  background: var(--primary);
+}
+.clock-status.stale,
+.clock-status.device {
+  background: var(--muted-foreground);
+}
 .topbar strong {
   font-weight: 500;
   color: var(--foreground);
@@ -906,6 +942,12 @@ h1 {
   .topbar > div > span {
     display: none;
   }
+  .topbar-actions {
+    gap: 4px !important;
+  }
+  .topbar-undo span {
+    display: none;
+  }
   .page-content {
     padding: 28px 20px 110px;
   }
@@ -1011,6 +1053,32 @@ h1 {
   }
   .viewbar {
     gap: 22px;
+  }
+}
+@media (max-width: 420px) {
+  .topbar {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  .topbar-breadcrumb > svg,
+  .topbar-breadcrumb > strong,
+  .stride-clock > svg {
+    display: none;
+  }
+}
+@media (max-width: 340px) {
+  .topbar {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+  .topbar-actions {
+    gap: 1px !important;
+  }
+  .clock-status {
+    display: none;
+  }
+  .stride-clock {
+    padding: 0 1px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

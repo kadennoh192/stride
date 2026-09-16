@@ -507,6 +507,9 @@ function validateShape(e: EntityCandidate) {
         'timezone',
         (v) => v === '' || (typeof v === 'string' && validZone(v)),
       );
+      optional(d, 'clockTimezone', (v) =>
+        ['workspace', 'device', 'utc'].includes(String(v)),
+      );
       for (const key of ['hidden', 'navOrder'])
         optional(
           d,

@@ -43,6 +43,7 @@ import { useMediaQuery } from '@/hooks/use-media-query';
 import { WebMCP } from '@/lib/stride/webmcp';
 import { Modal } from './primitives';
 import { Loading } from './forms';
+import { NetworkClock } from './network-clock';
 const icons = {
   inbox: Inbox,
   today: Sun,
@@ -481,7 +482,7 @@ function Workspace() {
         inert={compact && navOpen}
       >
         <header className="topbar">
-          <div>
+          <div className="topbar-breadcrumb">
             <button
               className="icon-button menu-toggle"
               onClick={() => setNavOpen(!navOpen)}
@@ -495,14 +496,19 @@ function Workspace() {
             <ChevronRight size={13} />
             <strong>{title}</strong>
           </div>
-          <div>
+          <div className="topbar-actions">
+            <NetworkClock
+              mode={store.settings.clockTimezone}
+              workspaceZone={store.settings.timezone}
+            />
             {store.canUndo && (
               <button
-                className="subtle-button"
+                className="subtle-button topbar-undo"
+                aria-label="Undo last change"
                 onClick={() => void store.undo()}
               >
                 <Undo2 size={16} />
-                Undo
+                <span>Undo</span>
               </button>
             )}
             <button
