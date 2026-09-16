@@ -1767,7 +1767,8 @@ td select {
     top: 0 !important;
     left: 0 !important;
     transform: none !important;
-    translate: none !important;
+    --tw-translate-x: 0px !important;
+    --tw-translate-y: 0px !important;
     border-radius: 0 !important;
     padding: calc(24px + env(safe-area-inset-top)) 20px
       calc(24px + env(safe-area-inset-bottom)) !important;
