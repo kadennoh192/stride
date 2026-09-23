@@ -1,0 +1,27 @@
+[
+  {
+    "version": "0.2.0",
+    "date": "2026-09-21",
+    "summary": "School planning, daily streaks, optional wellness tools, and alarms.",
+    "changes": {
+      "Added": [
+        "Courses, assignments, grade calculations, and School views",
+        "Overall habit streak with earned and consumed freezes",
+        "Optional shower timer and daily check-ins",
+        "Standalone and linked alarms with repeat schedules",
+        "Cross-feature Insights and update checks"
+      ],
+      "Improved": ["Versioned local storage, backups, and sync compatibility"]
+    }
+  },
+  {
+    "version": "0.1.0",
+    "date": "2026-09-16",
+    "summary": "Initial private preview with tasks, pages, databases, habits, focus, and Watch Link.",
+    "changes": {
+      "Added": [
+        "Offline workspace, account sync, reminders, backups, and Apple Watch companion contract"
+      ]
+    }
+  }
+]

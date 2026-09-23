@@ -160,7 +160,7 @@ void test('complete backups round-trip records and bytes; corruption is rejected
   const archived = await stageBackupFile(archive.blob);
   assert.equal(archived.records, 2);
   assert.equal(await archived.files[0].blob.text(), 'original attachment');
-  assert.ok(archive.code.startsWith('STRIDE2.'));
+  assert.ok(archive.code.startsWith('STRIDE3.'));
   assert.equal((await stageBackupFile(new Blob([exported.json]))).records, 2);
   const corrupted = new Uint8Array(await archive.blob.arrayBuffer());
   corrupted[80] ^= 1;

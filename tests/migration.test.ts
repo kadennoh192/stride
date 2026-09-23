@@ -48,7 +48,7 @@ void test('version-one workspace migrates into unclaimed guest storage without c
   });
   const { load, materialize, openDB } = await import('../lib/stride/storage');
   const state = await load('guest');
-  assert.equal(state.version, 2);
+  assert.equal(state.version, 3);
   assert.equal(materialize(state.fields)[0].data.title, 'Legacy task');
   const db = await openDB();
   const snapshot = await new Promise<unknown>((resolve) => {

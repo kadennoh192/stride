@@ -60,6 +60,9 @@ export function TaskEditor({
     setData((d) => ({ ...d, ...part }));
   const children = tasks.filter((t) => t.data.parent === id && id);
   const [childTitle, setChildTitle] = useState('');
+  const [reminderKind, setReminderKind] = useState('due');
+  const [reminderMinutes, setReminderMinutes] = useState(10);
+  const [reminderTime, setReminderTime] = useState('09:00');
   const save = async () => {
     setBusy(true);
     setError('');
@@ -404,21 +407,79 @@ export function TaskEditor({
           <p className="muted">
             Background reminders need account sync and push setup in Settings.
           </p>
-          <Field label="Reminder rules (one per line)">
-            <textarea
-              value={data.reminders.join('\n')}
-              onChange={(e) =>
-                update({
-                  reminders: e.target.value.split('\n').filter(Boolean),
-                })
-              }
-              placeholder="due&#10;before:10&#10;daily:09:00"
-            />
-          </Field>
-          <p className="muted">
-            Use due, before:10 (minutes before due), daily:09:00, or a full ISO
-            timestamp.
-          </p>
+          <div className="form-grid">
+            <Field label="Remind me">
+              <select
+                value={reminderKind}
+                onChange={(e) => setReminderKind(e.target.value)}
+              >
+                <option value="due">At due time</option>
+                <option value="before">Before due time</option>
+                <option value="daily">Every day</option>
+              </select>
+            </Field>
+            {reminderKind === 'before' && (
+              <Field label="Minutes before">
+                <input
+                  type="number"
+                  min="1"
+                  max="10080"
+                  value={reminderMinutes}
+                  onChange={(e) => setReminderMinutes(Number(e.target.value))}
+                />
+              </Field>
+            )}
+            {reminderKind === 'daily' && (
+              <Field label="Daily time">
+                <input
+                  type="time"
+                  value={reminderTime}
+                  onChange={(e) => setReminderTime(e.target.value)}
+                />
+              </Field>
+            )}
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                const rule =
+                  reminderKind === 'before'
+                    ? `before:${reminderMinutes}`
+                    : reminderKind === 'daily'
+                      ? `daily:${reminderTime}`
+                      : 'due';
+                if (!data.reminders.includes(rule))
+                  update({ reminders: [...data.reminders, rule] });
+              }}
+            >
+              Add reminder
+            </button>
+          </div>
+          <ul>
+            {data.reminders.map((rule, index) => (
+              <li key={`${rule}-${index}`}>
+                {rule === 'due'
+                  ? 'At due time'
+                  : rule.startsWith('before:')
+                    ? `${rule.slice(7)} minutes before due`
+                    : rule.startsWith('daily:')
+                      ? `Daily at ${rule.slice(6)}`
+                      : new Date(rule).toLocaleString()}
+                <button
+                  type="button"
+                  className="subtle-button"
+                  aria-label={`Remove reminder ${index + 1}`}
+                  onClick={() =>
+                    update({
+                      reminders: data.reminders.filter((_, i) => i !== index),
+                    })
+                  }
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
           {task && (
             <div className="form-actions">
               <button

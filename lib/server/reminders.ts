@@ -11,7 +11,10 @@ import {
   type Entity,
   type Field,
   type Task,
+  type Assignment,
+  type Alarm,
 } from '../stride/types';
+import { nextAlarmOccurrence, type AlarmSchedule } from '../stride/alarms';
 import { zonedInstant } from '../stride/domain';
 import { materialize } from '../stride/storage';
 export function pushConfig() {
@@ -64,9 +67,18 @@ export async function hash(text: string) {
 }
 export async function scheduleEntity(owner: string, id: string) {
   const entity = await serverEntity(owner, id);
-  if (!entity || !['task', 'habit', 'settings'].includes(entity.kind)) return;
+  if (
+    !entity ||
+    !['task', 'assignment', 'habit', 'settings', 'alarm'].includes(entity.kind)
+  )
+    return;
   const database = db();
-  if (entity.deleted || entity.data.completedAt) {
+  if (
+    entity.deleted ||
+    entity.data.completedAt ||
+    (entity.kind === 'assignment' && entity.data.status === 'Done') ||
+    (entity.kind === 'alarm' && !entity.data.enabled)
+  ) {
     await database
       .prepare(
         "UPDATE reminder_jobs SET state='cancelled' WHERE owner=? AND entity=? AND state IN ('pending','sending')",
@@ -81,8 +93,8 @@ export async function scheduleEntity(owner: string, id: string) {
   );
   const times: number[] = [];
   const now = Date.now();
-  if (entity.kind === 'task') {
-    const t = entity as Task;
+  if (entity.kind === 'task' || entity.kind === 'assignment') {
+    const t = entity as Task | Assignment;
     for (const reminder of t.data.reminders || []) {
       if (reminder.startsWith('daily:')) {
         for (let i = 0; i < 32; i++)
@@ -104,6 +116,37 @@ export async function scheduleEntity(owner: string, id: string) {
           );
       } else times.push(Date.parse(reminder));
     }
+  } else if (entity.kind === 'alarm') {
+    const alarm = entity as Alarm;
+    if (alarm.data.linkedKind && alarm.data.linkedId) {
+      const linked = await serverEntity(owner, alarm.data.linkedId);
+      if (
+        !linked ||
+        linked.deleted ||
+        linked.data.completedAt ||
+        linked.data.status === 'Done'
+      ) {
+        await database
+          .prepare(
+            "UPDATE reminder_jobs SET state='cancelled' WHERE owner=? AND entity=? AND state IN ('pending','sending')",
+          )
+          .bind(owner, id)
+          .run();
+        return;
+      }
+    }
+    const next = nextAlarmOccurrence(
+      alarm.data.schedule as AlarmSchedule,
+      zone,
+      now - 300000,
+    );
+    if (
+      next &&
+      new Date(next).toISOString() !== alarm.data.acknowledgedOccurrence
+    )
+      times.push(next);
+    const snoozed = Date.parse(stringValue(alarm.data.snoozedUntil || ''));
+    if (Number.isFinite(snoozed) && snoozed > now) times.push(snoozed);
   } else if (entity.kind === 'habit' && entity.data.reminder) {
     for (let i = 0; i < 32; i++) {
       const d = shiftDate(dateKey(new Date(), zone), i);
@@ -119,6 +162,35 @@ export async function scheduleEntity(owner: string, id: string) {
       | { running?: boolean; end?: number }
       | undefined;
     if (timer?.running && timer.end) times.push(timer.end);
+    const shower = entity.data.activeShowerTimer as
+      | {
+          running?: boolean;
+          startedAt?: number;
+          elapsedSeconds?: number;
+          targetMinutes?: number;
+        }
+      | undefined;
+    if (
+      entity.data.showerEnabled &&
+      shower?.running &&
+      shower.startedAt &&
+      shower.targetMinutes
+    )
+      times.push(
+        shower.startedAt +
+          shower.targetMinutes * 60000 -
+          (shower.elapsedSeconds || 0) * 1000,
+      );
+    if (entity.data.checkInsEnabled && entity.data.checkInReminder) {
+      for (let i = 0; i < 32; i++)
+        times.push(
+          zonedInstant(
+            shiftDate(dateKey(new Date(), zone), i),
+            stringValue(entity.data.checkInReminder),
+            zone,
+          ),
+        );
+    }
   }
   const jobs = await Promise.all(
     [...new Set(times)]
@@ -186,12 +258,16 @@ export async function sendPush(
   body: string,
   url: string,
   tag: string,
+  extra: Record<string, string> = {},
 ) {
   if (!validEndpoint(subscription.endpoint))
     throw new Error('Unsupported push endpoint');
   const config = pushConfig();
   const payload = await buildPushPayload(
-    { data: JSON.stringify({ title, body, url, tag }), options: { ttl: 300 } },
+    {
+      data: JSON.stringify({ title, body, url, tag, ...extra }),
+      options: { ttl: 300 },
+    },
     subscription,
     {
       subject: config.subject,

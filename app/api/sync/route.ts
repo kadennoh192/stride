@@ -23,7 +23,7 @@ export async function POST(request: Request) {
       return Response.json({ error: 'Sync batch too large' }, { status: 413 });
     const input = JSON.parse(text);
     if (
-      input.version !== 2 ||
+      ![2, 3].includes(input.version) ||
       !Array.isArray(input.changes) ||
       input.changes.length > 10 ||
       !input.changes.every(validChange) ||
@@ -37,6 +37,37 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     const database = db();
+    if (input.version === 2) {
+      const newer = await database
+        .prepare(
+          "SELECT kind FROM fields WHERE owner=? AND kind IN ('course','assignment','alarm','showerSession','checkIn','streakDay') LIMIT 1",
+        )
+        .bind(user.id)
+        .first();
+      if (
+        newer ||
+        (input.changes as Change[]).some((change) =>
+          change.fields.some((field) =>
+            [
+              'course',
+              'assignment',
+              'alarm',
+              'showerSession',
+              'checkIn',
+              'streakDay',
+            ].includes(field.kind),
+          ),
+        )
+      )
+        return Response.json(
+          {
+            error:
+              'This workspace requires a newer version of Stride before syncing.',
+            upgradeRequired: true,
+          },
+          { status: 426, headers: { 'Cache-Control': 'no-store' } },
+        );
+    }
     for (const change of input.changes as Change[]) {
       const seen = await database
         .prepare('SELECT id FROM dedup WHERE owner = ? AND id = ?')
@@ -126,9 +157,32 @@ export async function POST(request: Request) {
       .bind(user.id, input.cursor)
       .all<{ seq: number; payload: string }>();
     const history = result.results.map((r) => JSON.parse(r.payload) as Change);
+    if (
+      input.version === 2 &&
+      history.some((change) =>
+        change.fields.some((field) =>
+          [
+            'course',
+            'assignment',
+            'alarm',
+            'showerSession',
+            'checkIn',
+            'streakDay',
+          ].includes(field.kind),
+        ),
+      )
+    )
+      return Response.json(
+        {
+          error:
+            'This workspace requires a newer version of Stride before syncing.',
+          upgradeRequired: true,
+        },
+        { status: 426, headers: { 'Cache-Control': 'no-store' } },
+      );
     return Response.json(
       {
-        version: 2,
+        version: input.version,
         owner: user.id,
         acknowledged: input.changes.map((c: Change) => c.id),
         fields: history.flatMap((c) => c.fields),

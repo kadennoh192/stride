@@ -10,6 +10,7 @@ import type {
   DatabaseRow,
 } from './types';
 import { validZone, validDate, safeURL, embedURL } from './domain';
+import { validAlarmSchedule } from './alarms';
 export const kinds: Kind[] = [
   'task',
   'project',
@@ -28,6 +29,12 @@ export const kinds: Kind[] = [
   'template',
   'favorite',
   'fileTombstone',
+  'course',
+  'assignment',
+  'alarm',
+  'showerSession',
+  'checkIn',
+  'streakDay',
 ];
 const id = /^[a-zA-Z0-9_-]{1,150}$/;
 const stamp = /^\d{15}-[a-zA-Z0-9-]{1,100}$/;
@@ -263,10 +270,186 @@ const navigation = [
   'explore',
   'archive',
   'history',
+  'school',
+  'alarms',
+  'shower',
+  'checkIns',
 ];
 function validateShape(e: EntityCandidate) {
   const d = e.data;
   switch (e.kind) {
+    case 'course': {
+      if (
+        typeof d.title !== 'string' ||
+        !d.title.trim() ||
+        d.title.length > 1000 ||
+        typeof d.instructor !== 'string' ||
+        typeof d.term !== 'string' ||
+        !hexColor(d.color) ||
+        !['none', 'points', 'percent', 'weighted'].includes(
+          String(d.gradingMode),
+        ) ||
+        !(d.targetGrade === null || finite(d.targetGrade, 0, 100)) ||
+        !Array.isArray(d.categories) ||
+        !Array.isArray(d.thresholds)
+      )
+        invalid('Invalid course');
+      const categories = d.categories as unknown[];
+      if (
+        categories.length > 30 ||
+        categories.some(
+          (category) =>
+            !object(category) ||
+            typeof category.id !== 'string' ||
+            !id.test(category.id) ||
+            typeof category.title !== 'string' ||
+            !category.title.trim() ||
+            !finite(category.weight, 0, 100),
+        )
+      )
+        invalid('Invalid grade categories');
+      if (
+        new Set(categories.map((category) => (category as { id: string }).id))
+          .size !== categories.length
+      )
+        invalid('Grade categories must be unique');
+      if (
+        d.gradingMode === 'weighted' &&
+        Math.abs(
+          categories.reduce<number>(
+            (sum, category) =>
+              sum + Number((category as { weight: number }).weight),
+            0,
+          ) - 100,
+        ) > 0.000001
+      )
+        invalid('Weighted grade categories must total 100%.');
+      const thresholds = d.thresholds as unknown[];
+      if (
+        !thresholds.length ||
+        thresholds.length > 20 ||
+        thresholds.some(
+          (threshold) =>
+            !object(threshold) ||
+            typeof threshold.letter !== 'string' ||
+            !threshold.letter.trim() ||
+            threshold.letter.length > 20 ||
+            !finite(threshold.minimum, 0, 100),
+        ) ||
+        new Set(
+          thresholds.map(
+            (threshold) => (threshold as { letter: string }).letter,
+          ),
+        ).size !== thresholds.length ||
+        new Set(
+          thresholds.map(
+            (threshold) => (threshold as { minimum: number }).minimum,
+          ),
+        ).size !== thresholds.length
+      )
+        invalid('Invalid or duplicate letter-grade thresholds');
+      break;
+    }
+    case 'assignment':
+      if (
+        typeof d.title !== 'string' ||
+        !d.title.trim() ||
+        d.title.length > 1000 ||
+        typeof d.course !== 'string' ||
+        !id.test(d.course) ||
+        typeof d.type !== 'string' ||
+        d.type.length > 100 ||
+        typeof d.description !== 'string' ||
+        d.description.length > 100000 ||
+        !Number.isInteger(d.priority) ||
+        !finite(d.priority, 1, 4) ||
+        !['To do', 'In progress', 'Done'].includes(String(d.status)) ||
+        typeof d.due !== 'string' ||
+        (d.due !== '' && !validDate(d.due)) ||
+        typeof d.time !== 'string' ||
+        (d.time !== '' && !time.test(d.time)) ||
+        (d.time && !d.due) ||
+        !validZone(String(d.timezone)) ||
+        !Array.isArray(d.attachments) ||
+        d.attachments.some(
+          (item) =>
+            !object(item) ||
+            typeof item.id !== 'string' ||
+            !id.test(item.id) ||
+            typeof item.name !== 'string' ||
+            item.name.length > 1024,
+        ) ||
+        typeof d.category !== 'string' ||
+        !strings(d.reminders) ||
+        !strings(d.alarms) ||
+        !finite(d.possible, Number.MIN_VALUE, 1e9) ||
+        !(d.score === null || finite(d.score, 0, 1e9)) ||
+        !(d.expectedScore === null || finite(d.expectedScore, 0, 1e9)) ||
+        typeof d.completedAt !== 'string' ||
+        (d.completedAt && !instant(d.completedAt))
+      )
+        invalid('Invalid assignment');
+      break;
+    case 'alarm':
+      if (
+        typeof d.label !== 'string' ||
+        !d.label.trim() ||
+        d.label.length > 500 ||
+        !validZone(String(d.timezone)) ||
+        typeof d.enabled !== 'boolean' ||
+        typeof d.sound !== 'string' ||
+        !finite(d.volume, 0, 1) ||
+        typeof d.vibration !== 'boolean' ||
+        !Number.isInteger(d.snoozeMinutes) ||
+        !finite(d.snoozeMinutes, 1, 120) ||
+        typeof d.nextOccurrence !== 'string' ||
+        (d.nextOccurrence && !instant(d.nextOccurrence)) ||
+        !['', 'task', 'assignment'].includes(String(d.linkedKind)) ||
+        typeof d.linkedId !== 'string' ||
+        (d.linkedId && !id.test(d.linkedId)) ||
+        (d.linkedKind && !d.linkedId) ||
+        typeof d.acknowledgedOccurrence !== 'string' ||
+        (d.acknowledgedOccurrence && !instant(d.acknowledgedOccurrence)) ||
+        typeof d.respectQuietHours !== 'boolean' ||
+        !validAlarmSchedule(d.schedule)
+      )
+        invalid('Invalid alarm');
+      break;
+    case 'showerSession':
+      if (
+        !instant(d.at) ||
+        !finite(d.duration, 0, 86400) ||
+        !finite(d.targetMinutes, 1, 240) ||
+        !finite(d.flowLitresPerMinute, 0.1, 100)
+      )
+        invalid('Invalid shower session');
+      break;
+    case 'checkIn':
+      if (
+        !validDate(String(d.date)) ||
+        ![d.mood, d.energy, d.stress].every(
+          (v) => Number.isInteger(v) && finite(v, 1, 5),
+        ) ||
+        !finite(d.sleepHours, 0, 24) ||
+        typeof d.note !== 'string' ||
+        d.note.length > 10000
+      )
+        invalid('Invalid check-in');
+      break;
+    case 'streakDay':
+      if (
+        !validDate(String(d.date)) ||
+        ![d.scheduled, d.completed, d.requirement, d.streak, d.freezes].every(
+          (v) => Number.isInteger(v) && finite(v, 0, 100000),
+        ) ||
+        Number(d.completed) > Number(d.scheduled) ||
+        !['neutral', 'complete', 'freeze', 'missed'].includes(
+          String(d.outcome),
+        ) ||
+        Number(d.freezes) > 2
+      )
+        invalid('Invalid streak day');
+      break;
     case 'project':
       optional(d, 'sections', strings);
       optional(d, 'color', hexColor);
@@ -480,6 +663,45 @@ function validateShape(e: EntityCandidate) {
         invalid('Invalid attachment removal marker');
       break;
     case 'settings':
+      optional(d, 'educationLevel', (v) =>
+        ['gradeSchool', 'highSchool', 'university', 'custom'].includes(
+          String(v),
+        ),
+      );
+      optional(d, 'schoolSetup', (v) => typeof v === 'boolean');
+      optional(d, 'alarmEditorMode', (v) =>
+        ['basic', 'advanced'].includes(String(v)),
+      );
+      optional(
+        d,
+        'alarmSound',
+        (v) => typeof v === 'string' && v.length <= 100,
+      );
+      optional(d, 'alarmVolume', (v) => finite(v, 0, 1));
+      optional(d, 'alarmVibration', (v) => typeof v === 'boolean');
+      optional(
+        d,
+        'alarmSnoozeMinutes',
+        (v) => Number.isInteger(v) && finite(v, 1, 120),
+      );
+      optional(
+        d,
+        'streakDailyRequirement',
+        (v) => Number.isInteger(v) && finite(v, 1, 100),
+      );
+      for (const key of [
+        'optionalModulesOnboarded',
+        'showerEnabled',
+        'checkInsEnabled',
+      ])
+        optional(d, key, (v) => typeof v === 'boolean');
+      optional(d, 'showerTargetMinutes', (v) => finite(v, 1, 240));
+      optional(d, 'showerFlowLitresPerMinute', (v) => finite(v, 0.1, 100));
+      optional(
+        d,
+        'checkInReminder',
+        (v) => v === '' || (typeof v === 'string' && time.test(v)),
+      );
       optional(d, 'name', (v) => typeof v === 'string' && v.length <= 100);
       optional(d, 'theme', (v) =>
         ['light', 'dark', 'system', 'custom'].includes(String(v)),
@@ -585,6 +807,17 @@ function validateShape(e: EntityCandidate) {
           typeof v.task === 'string' &&
           (!v.task || id.test(v.task)) &&
           ['focus', 'break', 'longBreak'].includes(String(v.phase))
+        );
+      });
+      optional(d, 'activeShowerTimer', (v) => {
+        if (v === null) return true;
+        if (!object(v)) return false;
+        return (
+          finite(v.startedAt, 0, Number.MAX_SAFE_INTEGER) &&
+          finite(v.elapsedSeconds, 0, 86400) &&
+          typeof v.running === 'boolean' &&
+          finite(v.targetMinutes, 1, 240) &&
+          finite(v.flowLitresPerMinute, 0.1, 100)
         );
       });
       break;
@@ -711,6 +944,20 @@ export function validateGraph(
   edited: Entity[],
   lookup: (id: string) => Entity | undefined,
 ) {
+  for (const entity of edited) {
+    if (entity.deleted || entity.kind !== 'assignment') continue;
+    const course = lookup(entity.data.course);
+    if (course && course.kind !== 'course')
+      invalid('Assignments must reference a course.');
+    if (
+      course?.kind === 'course' &&
+      course.data.gradingMode === 'weighted' &&
+      !course.data.categories.some(
+        (category) => category.id === entity.data.category,
+      )
+    )
+      invalid('Choose a category from this course.');
+  }
   for (const entity of edited)
     if (entity.kind === 'row' && !entity.deleted)
       validateRowSchema(entity, lookup);

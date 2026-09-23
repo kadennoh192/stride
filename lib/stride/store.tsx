@@ -228,7 +228,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            version: 2,
+            version: 3,
             owner,
             cursor: state.cursor,
             changes: batch,
@@ -251,7 +251,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         };
         if (!response.ok) throw new Error(data.error || 'Sync unavailable');
         if (
-          data.version !== 2 ||
+          data.version !== 3 ||
           data.owner !== owner ||
           !Array.isArray(data.fields) ||
           !Array.isArray(data.acknowledged) ||

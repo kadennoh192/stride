@@ -2,7 +2,7 @@
 import type { ActiveTimer } from '@/lib/stride/timer';
 import { countLabel, stringValue } from '@/lib/stride/types';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   Flame,
   Plus,
@@ -21,8 +21,16 @@ import {
 } from 'lucide-react';
 import { useStride } from '@/lib/stride/store';
 import { habitLogId } from '@/lib/stride/habits';
+import { calculateStreak } from '@/lib/stride/streak';
+import { courseAverage } from '@/lib/stride/school';
 import {
   type Habit,
+  type HabitLog,
+  type StreakDay,
+  type Assignment,
+  type Course,
+  type ShowerSession,
+  type CheckIn,
   type Task,
   uid,
   dateKey,
@@ -155,6 +163,61 @@ export function Habits() {
   const [date, setDate] = useState(today);
   const [editing, setEditing] = useState<Habit | 'new' | null>(null);
   const habits = store.entities.filter((e) => e.kind === 'habit') as Habit[];
+  const habitLogs = store.entities.filter(
+    (e) => e.kind === 'habitLog',
+  ) as HabitLog[];
+  const streakDays = store.entities.filter(
+    (e) => e.kind === 'streakDay',
+  ) as StreakDay[];
+  const streakSummary = useMemo(
+    () =>
+      calculateStreak(
+        habits,
+        habitLogs,
+        today,
+        store.settings.streakDailyRequirement,
+      ),
+    [habits, habitLogs, today, store.settings.streakDailyRequirement],
+  );
+  const persistingStreak = useRef(false);
+  useEffect(() => {
+    if (!store.ready || persistingStreak.current) return;
+    const wanted = new Map(streakSummary.days.map((day) => [day.id, day]));
+    const edits = [
+      ...streakSummary.days
+        .filter((day) => {
+          const saved = streakDays.find((record) => record.id === day.id);
+          return (
+            !saved || JSON.stringify(saved.data) !== JSON.stringify(day.data)
+          );
+        })
+        .map((day) => ({
+          id: day.id,
+          kind: 'streakDay' as const,
+          data: day.data,
+        })),
+      ...streakDays
+        .filter((day) => !wanted.has(day.id))
+        .map((day) => ({
+          id: day.id,
+          kind: 'streakDay' as const,
+          data: { _deleted: true },
+        })),
+    ];
+    if (!edits.length) return;
+    persistingStreak.current = true;
+    void (async () => {
+      for (let index = 0; index < edits.length; index += 80)
+        await store.edit(
+          edits.slice(index, index + 80),
+          'Updated habit streak history',
+        );
+    })()
+      .catch((error) => store.notice(String(error)))
+      .finally(() => {
+        persistingStreak.current = false;
+      });
+  }, [store, streakDays, streakSummary]);
   const days = Array.from({ length: 28 }, (_, i) => shiftDate(date, i - 27));
   const logs = useMemo(
     () =>
@@ -188,19 +251,6 @@ export function Habits() {
       ],
       'Logged habit',
     );
-  const streak = (h: Habit) => {
-    let total = 0;
-    for (let i = 0; i < 3650; i++) {
-      const d = shiftDate(date, -i);
-      if (!scheduled(h, d)) continue;
-      if (value(h, d) < Number(log(h, d)?.data.goal || h.data.goal)) {
-        if (i === 0) continue;
-        break;
-      }
-      total++;
-    }
-    return total;
-  };
   return (
     <>
       <div className="page-heading">
@@ -216,6 +266,68 @@ export function Habits() {
           New habit
         </button>
       </div>
+      <section className="school-column" aria-label="Overall habit streak">
+        <h2>
+          <Flame aria-hidden="true" /> {streakSummary.current} day streak
+        </h2>
+        <p>
+          Longest: {streakSummary.longest} days · Freezes:{' '}
+          {streakSummary.freezes} of 2 · Used: {streakSummary.used}
+        </p>
+        <label>
+          Scheduled habits needed each day{' '}
+          <input
+            type="number"
+            min="1"
+            max="100"
+            value={store.settings.streakDailyRequirement}
+            onChange={(event) =>
+              void store.setSettings({
+                streakDailyRequirement: Number(event.target.value),
+              })
+            }
+          />
+        </label>
+        <p>
+          Rest days do not advance or break the streak. Every seven-day
+          milestone awards a freeze, up to two.
+        </p>
+        {streakSummary.milestones.length > 0 && (
+          <p aria-live="polite">
+            Milestones: {streakSummary.milestones.join(', ')} days
+          </p>
+        )}
+        <details>
+          <summary>Streak history</summary>
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Completed</th>
+                <th>Outcome</th>
+                <th>Streak</th>
+                <th>Freezes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {streakSummary.days
+                .slice(-90)
+                .reverse()
+                .map((day) => (
+                  <tr key={day.id}>
+                    <td>{day.data.date}</td>
+                    <td>
+                      {day.data.completed} / {day.data.requirement}
+                    </td>
+                    <td>{day.data.outcome}</td>
+                    <td>{day.data.streak}</td>
+                    <td>{day.data.freezes}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </details>
+      </section>
       <div className="calendar-toolbar">
         <button
           className="icon-button"
@@ -267,9 +379,7 @@ export function Habits() {
                   </span>
                   <div>
                     <h3>{h.data.title}</h3>
-                    <p className="muted">
-                      {streak(h)} day streak · {percent}% over 28 days
-                    </p>
+                    <p className="muted">{percent}% consistency over 28 days</p>
                   </div>
                   <button
                     className="icon-button"
@@ -764,6 +874,23 @@ export function Insights() {
     shiftDate(today, i - span + 1),
   );
   const completions = store.entities.filter((e) => e.kind === 'completion');
+  const assignments = store.entities.filter(
+    (e): e is Assignment => e.kind === 'assignment',
+  );
+  const courses = store.entities.filter(
+    (e): e is Course => e.kind === 'course',
+  );
+  const showers = store.settings.showerEnabled
+    ? store.entities.filter(
+        (e): e is ShowerSession => e.kind === 'showerSession',
+      )
+    : [];
+  const checkIns = store.settings.checkInsEnabled
+    ? store.entities.filter((e): e is CheckIn => e.kind === 'checkIn')
+    : [];
+  const streakDays = store.entities.filter(
+    (e): e is StreakDay => e.kind === 'streakDay',
+  );
   const sessions = store.entities.filter(
     (e) => e.kind === 'session' && e.data.phase === 'focus',
   );
@@ -775,6 +902,51 @@ export function Insights() {
   }
   const counts = days.map((day) => daily.get(day) || 0);
   const completed = counts.reduce((a, b) => a + b, 0);
+  const previousStart = shiftDate(days[0], -span);
+  const previousEnd = shiftDate(days[0], -1);
+  const prevTasks = completions.filter((event) => {
+    const day = dateKey(new Date(stringValue(event.data.at)), zone);
+    return day >= previousStart && day <= previousEnd;
+  }).length;
+  const assignmentCompletions = assignments.filter(
+    (item) =>
+      item.data.completedAt &&
+      dateKey(new Date(item.data.completedAt), zone) >= days[0] &&
+      dateKey(new Date(item.data.completedAt), zone) <= today,
+  ).length;
+  const previousAssignments = assignments.filter(
+    (item) =>
+      item.data.completedAt &&
+      dateKey(new Date(item.data.completedAt), zone) >= previousStart &&
+      dateKey(new Date(item.data.completedAt), zone) <= previousEnd,
+  ).length;
+  const dueAssignments = assignments.filter(
+    (item) =>
+      item.data.due >= today &&
+      item.data.due <= shiftDate(today, 7) &&
+      item.data.status !== 'Done',
+  ).length;
+  const overdueAssignments = assignments.filter(
+    (item) =>
+      item.data.due && item.data.due < today && item.data.status !== 'Done',
+  ).length;
+  const showerPeriod = showers.filter(
+    (item) =>
+      dateKey(new Date(item.data.at), zone) >= days[0] &&
+      dateKey(new Date(item.data.at), zone) <= today,
+  );
+  const showerMinutes = showerPeriod.reduce(
+    (sum, item) => sum + item.data.duration / 60,
+    0,
+  );
+  const showerLitres = showerPeriod.reduce(
+    (sum, item) =>
+      sum + (item.data.duration / 60) * item.data.flowLitresPerMinute,
+    0,
+  );
+  const lastStreak = [...streakDays].sort((a, b) =>
+    b.data.date.localeCompare(a.data.date),
+  )[0];
   const focus = Math.round(
     sessions
       .filter((e) => {
@@ -783,7 +955,28 @@ export function Insights() {
       })
       .reduce((s, e) => s + Number(e.data.duration), 0) / 60,
   );
+  const focusByDay = new Map<string, number>();
+  for (const session of sessions) {
+    const day = dateKey(new Date(stringValue(session.data.at)), zone);
+    focusByDay.set(
+      day,
+      (focusByDay.get(day) || 0) + Number(session.data.duration) / 60,
+    );
+  }
+  const moodHigh = checkIns.filter(
+    (entry) => entry.data.date >= days[0] && entry.data.mood >= 4,
+  );
+  const moodLower = checkIns.filter(
+    (entry) => entry.data.date >= days[0] && entry.data.mood <= 3,
+  );
+  const pairedFocus = (entries: CheckIn[]) =>
+    entries.reduce(
+      (sum, entry) => sum + (focusByDay.get(entry.data.date) || 0),
+      0,
+    ) / entries.length;
   const xp = completions.length * 10;
+  const comparison = (current: number, previous: number) =>
+    `${current - previous >= 0 ? '+' : ''}${current - previous} vs previous ${span} days`;
   const level = Math.floor(xp / 100) + 1;
   return (
     <>
@@ -835,6 +1028,86 @@ export function Insights() {
           <span>XP · Level {level}</span>
         </div>
       </div>
+      <div className="school-board">
+        <section className="school-column">
+          <h2>Period comparison</h2>
+          <p>Tasks: {comparison(completed, prevTasks)}</p>
+          <p>
+            Assignments:{' '}
+            {comparison(assignmentCompletions, previousAssignments)}
+          </p>
+        </section>
+        <section className="school-column">
+          <h2>Habit streak</h2>
+          <p>
+            Current: {lastStreak?.data.streak || 0} days · Longest:{' '}
+            {Math.max(0, ...streakDays.map((day) => day.data.streak))} days
+          </p>
+          <p>
+            Freezes: {lastStreak?.data.freezes || 0} · Used in period:{' '}
+            {
+              streakDays.filter(
+                (day) =>
+                  day.data.date >= days[0] && day.data.outcome === 'freeze',
+              ).length
+            }
+          </p>
+        </section>
+        <section className="school-column">
+          <h2>School workload</h2>
+          <p>
+            {assignmentCompletions} assignments completed · {dueAssignments} due
+            soon · {overdueAssignments} overdue
+          </p>
+          {courses.map((course) => {
+            const average = courseAverage(course, assignments);
+            return (
+              <p key={course.id}>
+                {course.data.title}:{' '}
+                {average === null ? 'No graded work' : `${average.toFixed(1)}%`}
+              </p>
+            );
+          })}
+        </section>
+        {store.settings.showerEnabled && (
+          <section className="school-column">
+            <h2>Shower estimates</h2>
+            <p>
+              {showerPeriod.length} sessions · {showerMinutes.toFixed(1)}{' '}
+              minutes
+            </p>
+            <p>Estimated water use: {showerLitres.toFixed(1)} litres</p>
+          </section>
+        )}
+        {store.settings.checkInsEnabled && (
+          <section className="school-column">
+            <h2>Check-ins</h2>
+            <p>
+              {
+                checkIns.filter(
+                  (entry) =>
+                    entry.data.date >= days[0] && entry.data.date <= today,
+                ).length
+              }{' '}
+              in this period
+            </p>
+            <p>
+              {checkIns.length < 3
+                ? 'More entries are needed for descriptive trends.'
+                : 'Mood, energy, stress, and sleep trends are descriptive, not medical conclusions.'}
+            </p>
+            {moodHigh.length >= 3 && moodLower.length >= 3 && (
+              <p>
+                Paired daily focus averages: {pairedFocus(moodHigh).toFixed(1)}{' '}
+                minutes on mood 4–5 days ({moodHigh.length} days),{' '}
+                {pairedFocus(moodLower).toFixed(1)} minutes on mood 1–3 days (
+                {moodLower.length} days). This describes your entries only and
+                does not imply a cause.
+              </p>
+            )}
+          </section>
+        )}
+      </div>
       <section className="insight-chart">
         <h2>Daily progress</h2>
         <p className="muted">Completed tasks over the last {span} days</p>
@@ -862,6 +1135,8 @@ export function Insights() {
               <tr>
                 <th>Date</th>
                 <th>Completed tasks</th>
+                <th>Focus minutes</th>
+                {store.settings.checkInsEnabled && <th>Mood check-in</th>}
               </tr>
             </thead>
             <tbody>
@@ -869,6 +1144,13 @@ export function Insights() {
                 <tr key={d}>
                   <td>{d}</td>
                   <td>{counts[i]}</td>
+                  <td>{Math.round(focusByDay.get(d) || 0)}</td>
+                  {store.settings.checkInsEnabled && (
+                    <td>
+                      {checkIns.find((entry) => entry.data.date === d)?.data
+                        .mood ?? '—'}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

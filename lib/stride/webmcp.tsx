@@ -34,7 +34,7 @@ export function WebMCP() {
       {
         name: 'stride_search',
         description:
-          'Search this Stride workspace for tasks, pages, projects and databases.',
+          'Search this Stride workspace for tasks, pages, projects, databases, courses and assignments.',
         inputSchema: {
           type: 'object',
           properties: { query: { type: 'string' } },
@@ -54,7 +54,14 @@ export function WebMCP() {
           return latest.current.entities
             .filter(
               (e) =>
-                ['task', 'page', 'project', 'database'].includes(e.kind) &&
+                [
+                  'task',
+                  'page',
+                  'project',
+                  'database',
+                  'course',
+                  'assignment',
+                ].includes(e.kind) &&
                 stringValue(e.data.title || '')
                   .toLowerCase()
                   .includes(query),

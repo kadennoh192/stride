@@ -9,6 +9,7 @@ import {
 import { dateKey, shiftDate, stringValue } from '@/lib/stride/types';
 import { habitLogId } from '@/lib/stride/habits';
 import { zonedInstant } from '@/lib/stride/domain';
+import { inQuietHours } from '@/lib/stride/alarms';
 import type { PushSubscription as WebSubscription } from '@block65/webcrypto-web-push';
 export async function POST(request: Request) {
   if (!pushConfigured())
@@ -59,6 +60,11 @@ export async function POST(request: Request) {
         !entity ||
         entity.deleted ||
         entity.data.completedAt ||
+        (entity.kind === 'assignment' && entity.data.status === 'Done') ||
+        (entity.kind === 'alarm' &&
+          (!entity.data.enabled ||
+            entity.data.acknowledgedOccurrence ===
+              new Date(job.original_due).toISOString())) ||
         job.original_due <= Number(entity.data.reminderAcknowledgedAt || 0) ||
         now - job.due > 3600000 ||
         now - job.original_due > 86400000
@@ -70,6 +76,30 @@ export async function POST(request: Request) {
           .bind(job.id)
           .run();
         continue;
+      }
+      if (
+        entity.kind === 'alarm' &&
+        entity.data.linkedKind &&
+        entity.data.linkedId
+      ) {
+        const linked = await serverEntity(
+          job.owner,
+          stringValue(entity.data.linkedId),
+        );
+        if (
+          !linked ||
+          linked.deleted ||
+          linked.data.completedAt ||
+          linked.data.status === 'Done'
+        ) {
+          await database
+            .prepare(
+              "UPDATE reminder_jobs SET state='cancelled',lease=0 WHERE id=?",
+            )
+            .bind(job.id)
+            .run();
+          continue;
+        }
       }
       const settings = await serverEntity(job.owner, 'settings');
       const zone = stringValue(
@@ -83,13 +113,9 @@ export async function POST(request: Request) {
       }).format(now);
       const quietStart = stringValue(settings?.data.quietStart || '22:00'),
         quietEnd = stringValue(settings?.data.quietEnd || '07:00');
-      const quiet =
-        quietStart !== quietEnd &&
-        (quietStart < quietEnd
-          ? wall >= quietStart && wall < quietEnd
-          : wall >= quietStart || wall < quietEnd);
-      if (quiet) {
-        const day = dateKey(new Date(), zone);
+      const quiet = inQuietHours(wall, quietStart, quietEnd);
+      if (quiet && (entity.kind !== 'alarm' || entity.data.respectQuietHours)) {
+        const day = dateKey(new Date(now), zone);
         const next = zonedInstant(
           wall >= quietEnd ? shiftDate(day, 1) : day,
           quietEnd,
@@ -119,6 +145,28 @@ export async function POST(request: Request) {
               'INSERT INTO reminder_schedule_queue (owner,entity,revision) VALUES (?,?,?) ON CONFLICT(owner,entity) DO UPDATE SET revision=excluded.revision',
             )
             .bind(job.owner, job.entity, job.id)
+            .run();
+          continue;
+        }
+      }
+      if (
+        entity.kind === 'settings' &&
+        entity.data.checkInsEnabled &&
+        entity.data.checkInReminder
+      ) {
+        const day = dateKey(new Date(job.original_due), zone);
+        const checkInDue = zonedInstant(
+          day,
+          stringValue(entity.data.checkInReminder),
+          zone,
+        );
+        if (
+          checkInDue === job.original_due &&
+          (await serverEntity(job.owner, `checkin-${day}`))
+        ) {
+          await database
+            .prepare("UPDATE reminder_jobs SET state='done',lease=0 WHERE id=?")
+            .bind(job.id)
             .run();
           continue;
         }
@@ -153,19 +201,35 @@ export async function POST(request: Request) {
         const url =
           entity.kind === 'task'
             ? `/#task/${entity.id}`
-            : entity.kind === 'habit'
-              ? '/#habits'
-              : '/#focus';
+            : entity.kind === 'assignment'
+              ? '/#school'
+              : entity.kind === 'alarm'
+                ? '/#alarms'
+                : entity.kind === 'habit'
+                  ? '/#habits'
+                  : '/#focus';
         const response = await sendPush(
           JSON.parse(sub.payload) as WebSubscription,
-          stringValue(entity.data.title || 'Focus timer'),
+          stringValue(
+            entity.data.title || entity.data.label || 'Stride reminder',
+          ),
           entity.kind === 'settings'
-            ? 'Your interval is complete.'
+            ? 'Your timer or daily check-in is ready.'
             : entity.kind === 'habit'
               ? 'A small step for your daily routine.'
-              : 'Your task is ready for attention.',
+              : entity.kind === 'alarm'
+                ? 'Alarm ringing.'
+                : entity.kind === 'assignment'
+                  ? 'Your assignment is ready for attention.'
+                  : 'Your task is ready for attention.',
           url,
           job.id,
+          entity.kind === 'alarm'
+            ? {
+                alarmId: entity.id,
+                occurrence: new Date(job.original_due).toISOString(),
+              }
+            : {},
         );
         if (response.ok) {
           await database

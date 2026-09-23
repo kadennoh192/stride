@@ -34,6 +34,10 @@ import {
   LayoutGrid,
   History,
   CheckCheck,
+  GraduationCap,
+  AlarmClock,
+  Droplets,
+  HeartPulse,
 } from 'lucide-react';
 import { StoreProvider, useStride } from '@/lib/stride/store';
 import { type Entity, type Task, type Project } from '@/lib/stride/types';
@@ -44,6 +48,9 @@ import { WebMCP } from '@/lib/stride/webmcp';
 import { Modal } from './primitives';
 import { Loading } from './forms';
 import { NetworkClock } from './network-clock';
+import { AlarmOverlay } from './features/alarms';
+import { CheckInReminder } from './features/wellness';
+import { UpdateProvider } from '@/lib/stride/updates';
 const icons = {
   inbox: Inbox,
   today: Sun,
@@ -55,6 +62,10 @@ const icons = {
   databases: Grid2X2,
   habits: Flame,
   focus: Timer,
+  school: GraduationCap,
+  alarms: AlarmClock,
+  shower: Droplets,
+  checkIns: HeartPulse,
   matrix: LayoutGrid,
   countdowns: CalendarRange,
   insights: TrendingUp,
@@ -74,6 +85,10 @@ const names: Record<string, string> = {
   databases: 'Databases',
   habits: 'Habits',
   focus: 'Focus',
+  school: 'School',
+  alarms: 'Alarms',
+  shower: 'Shower',
+  checkIns: 'Check-ins',
   matrix: 'Eisenhower Matrix',
   countdowns: 'Countdowns',
   insights: 'Insights',
@@ -85,6 +100,18 @@ const names: Record<string, string> = {
 const Pages = lazy(() => import('./features/pages'));
 const Databases = lazy(() => import('./features/databases'));
 const SettingsPage = lazy(() => import('./features/settings'));
+const School = lazy(() => import('./features/school'));
+const Alarms = lazy(() =>
+  import('./features/alarms').then((module) => ({ default: module.Alarms })),
+);
+const Shower = lazy(() =>
+  import('./features/wellness').then((module) => ({ default: module.Shower })),
+);
+const CheckIns = lazy(() =>
+  import('./features/wellness').then((module) => ({
+    default: module.CheckIns,
+  })),
+);
 const Habits = lazy(() =>
   import('./features/productivity').then((m) => ({ default: m.Habits })),
 );
@@ -117,6 +144,10 @@ const enabled = [
   'databases',
   'habits',
   'focus',
+  'school',
+  'alarms',
+  'shower',
+  'checkIns',
   'matrix',
   'countdowns',
   'insights',
@@ -142,6 +173,8 @@ function Workspace() {
   const compact = useMediaQuery('(max-width: 1023px)');
   const sidebarRef = useRef<HTMLElement>(null);
   const [search, setSearch] = useState<string | null>(null);
+  const [enableShower, setEnableShower] = useState(false);
+  const [enableCheckIns, setEnableCheckIns] = useState(false);
   const [searchResults, setSearchResults] = useState<Entity[]>([]);
   const [searchState, setSearchState] = useState<
     'idle' | 'searching' | 'done' | 'error'
@@ -271,7 +304,11 @@ function Workspace() {
   const navOrder = [
     ...store.settings.navOrder.filter((x) => enabled.includes(x)),
     ...enabled.filter((x) => !store.settings.navOrder.includes(x)),
-  ];
+  ].filter(
+    (key) =>
+      (key !== 'shower' || store.settings.showerEnabled) &&
+      (key !== 'checkIns' || store.settings.checkInsEnabled),
+  );
   const projects = store.entities.filter(
     (e) => e.kind === 'project',
   ) as Project[];
@@ -288,6 +325,8 @@ function Workspace() {
     setSearch(null);
     if (e.kind === 'task') {
       setTaskEditor(e as Task);
+    } else if (e.kind === 'course' || e.kind === 'assignment') {
+      navigate(`${e.kind}/${e.id}`);
     } else
       navigate(
         `${e.kind === 'block' ? 'page' : e.kind}/${e.kind === 'block' ? e.data.page : e.id}`,
@@ -550,6 +589,16 @@ function Workspace() {
                 <Habits />
               ) : route === 'focus' ? (
                 <Focus />
+              ) : route === 'school' ||
+                route.startsWith('course/') ||
+                route.startsWith('assignment/') ? (
+                <School key={route} targetId={route.split('/')[1]} />
+              ) : route === 'alarms' ? (
+                <Alarms />
+              ) : route === 'shower' && store.settings.showerEnabled ? (
+                <Shower />
+              ) : route === 'checkIns' && store.settings.checkInsEnabled ? (
+                <CheckIns />
               ) : route === 'matrix' ? (
                 <Matrix onEdit={setTaskEditor} />
               ) : route === 'countdowns' ? (
@@ -626,6 +675,54 @@ function Workspace() {
           }}
         />
       )}
+      {store.ready && !store.settings.optionalModulesOnboarded && (
+        <Modal
+          open
+          title="Optional modules"
+          onClose={() =>
+            void store.setSettings({
+              optionalModulesOnboarded: true,
+              showerEnabled: enableShower,
+              checkInsEnabled: enableCheckIns,
+            })
+          }
+        >
+          <p>
+            Choose the optional daily tools you want to see. You can change
+            either choice in Settings later.
+          </p>
+          <label>
+            <input
+              type="checkbox"
+              checked={enableShower}
+              onChange={(event) => setEnableShower(event.target.checked)}
+            />{' '}
+            Shower timer and tracking
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={enableCheckIns}
+              onChange={(event) => setEnableCheckIns(event.target.checked)}
+            />{' '}
+            Daily check-ins
+          </label>
+          <div className="form-actions">
+            <button
+              className="primary-button"
+              onClick={() =>
+                void store.setSettings({
+                  optionalModulesOnboarded: true,
+                  showerEnabled: enableShower,
+                  checkInsEnabled: enableCheckIns,
+                })
+              }
+            >
+              Save choices
+            </button>
+          </div>
+        </Modal>
+      )}
       {visibleProject && (
         <ProjectEditor
           project={visibleProject === 'new' ? undefined : visibleProject}
@@ -689,6 +786,8 @@ function Workspace() {
           </p>
         </Modal>
       )}
+      <AlarmOverlay />
+      <CheckInReminder />
       <datalist id="timezones" aria-label="Suggested timezones">
         {[
           'America/Toronto',
@@ -715,8 +814,10 @@ function Workspace() {
 export default function Stride() {
   return (
     <StoreProvider>
-      <WebMCP />
-      <Workspace />
+      <UpdateProvider>
+        <WebMCP />
+        <Workspace />
+      </UpdateProvider>
     </StoreProvider>
   );
 }

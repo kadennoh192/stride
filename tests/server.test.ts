@@ -18,6 +18,7 @@ import {
   closeStorage,
 } from '../lib/stride/storage';
 import { taskData } from '../lib/stride/types';
+import { defaultThresholds } from '../lib/stride/school';
 
 void test('real D1 sync and dispatch enforce ownership, idempotence, durable scheduling, and leased claims', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'stride-api-test-'));
@@ -123,7 +124,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
     await build({
       stdin: {
         contents:
-          "export * as upload from './app/api/files/[id]/upload/route'; export * as sync from './app/api/sync/route'; export * as auth from './app/api/auth/route'; export * as files from './app/api/files/[id]/route'; export * as push from './app/api/push/route'; export * as dispatch from './app/api/reminders/route'; export * as watchPair from './app/api/watch/pair/route'; export * as watch from './app/api/watch/route'; export * as time from './app/api/time/route';",
+          "export * as upload from './app/api/files/[id]/upload/route'; export * as sync from './app/api/sync/route'; export * as auth from './app/api/auth/route'; export * as files from './app/api/files/[id]/route'; export * as push from './app/api/push/route'; export * as dispatch from './app/api/reminders/route'; export * as alarms from './app/api/alarms/route'; export * as watchPair from './app/api/watch/pair/route'; export * as watch from './app/api/watch/route'; export * as time from './app/api/time/route';",
         resolveDir: process.cwd(),
       },
       outfile: output,
@@ -911,6 +912,92 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       1_000_000,
     );
     assert.equal(await FILES.head('alice/resumable-file'), null);
+    const expanded = blank('alice');
+    applyEdits(
+      expanded,
+      [
+        {
+          id: 'school-course',
+          kind: 'course',
+          data: {
+            title: 'Math',
+            instructor: '',
+            color: '#5268e8',
+            term: '',
+            targetGrade: null,
+            gradingMode: 'none',
+            categories: [],
+            thresholds: defaultThresholds,
+          },
+        },
+        {
+          id: 'test-alarm',
+          kind: 'alarm',
+          data: {
+            label: 'Study',
+            timezone: 'America/Toronto',
+            enabled: true,
+            sound: 'chime',
+            volume: 0.7,
+            vibration: false,
+            snoozeMinutes: 10,
+            nextOccurrence: '2026-12-01T14:00:00.000Z',
+            linkedKind: '',
+            linkedId: '',
+            acknowledgedOccurrence: '',
+            respectQuietHours: false,
+            schedule: { rule: 'once', date: '2026-12-01', time: '09:00' },
+          },
+        },
+      ],
+      'Added course and alarm',
+    );
+    assert.equal(
+      (
+        await api.sync.POST(
+          make({
+            version: 3,
+            owner: 'alice',
+            cursor: 0,
+            changes: expanded.outbox,
+          }),
+        )
+      ).status,
+      200,
+    );
+    const oldClient = await api.sync.POST(
+      make({ version: 2, owner: 'alice', cursor: 0, changes: [] }),
+    );
+    assert.equal(oldClient.status, 426);
+    assert.equal((await oldClient.json()).upgradeRequired, true);
+    const alarmAction = () =>
+      new Request('https://stride.test/api/alarms', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://stride.test',
+          Cookie: 'stride_access=valid-alice',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: 'test-alarm',
+          occurrence: '2026-12-01T14:00:00.000Z',
+          action: 'dismiss',
+        }),
+      });
+    assert.equal((await api.alarms.POST(alarmAction())).status, 200);
+    assert.equal(
+      (await api.alarms.POST(alarmAction())).status,
+      200,
+      'notification action retries are idempotent',
+    );
+    assert.equal(
+      JSON.parse(
+        (await DB.prepare(
+          "SELECT value FROM fields WHERE owner='alice' AND entity='test-alarm' AND key='enabled'",
+        ).first<{ value: string }>())!.value,
+      ),
+      false,
+    );
     await closeStorage();
     await uploadFile((await getLocalFile('resumable-file', 'alice'))!);
     assert.deepEqual(uploadedParts, [0, 1, 1, 2]);

@@ -4,7 +4,12 @@ import { stringValue } from '@/lib/stride/types';
 import { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, CalendarDays, Plus } from 'lucide-react';
 import { useStride } from '@/lib/stride/store';
-import { dateKey, shiftDate, type Task } from '@/lib/stride/types';
+import {
+  dateKey,
+  shiftDate,
+  type Task,
+  type Assignment,
+} from '@/lib/stride/types';
 import { Select } from '../forms';
 import { Empty } from '../primitives';
 const modes = [
@@ -32,8 +37,10 @@ export function CalendarView({
   mode: fixed,
   onEdit,
   onReschedule,
+  assignments = [],
 }: {
   tasks: Task[];
+  assignments?: Assignment[];
   mode?: string;
   onEdit: (task: Task) => void;
   onReschedule?: (id: string, date: string) => void;
@@ -80,6 +87,29 @@ export function CalendarView({
     }
     return map;
   }, [visible]);
+  const assignmentByDate = useMemo(() => {
+    const map = new Map<string, Assignment[]>();
+    for (const assignment of assignments)
+      if (
+        assignment.data.due &&
+        (showCompleted || assignment.data.status !== 'Done')
+      )
+        map.set(assignment.data.due, [
+          ...(map.get(assignment.data.due) || []),
+          assignment,
+        ]);
+    return map;
+  }, [assignments, showCompleted]);
+  const assignmentEvent = (assignment: Assignment) => (
+    <button
+      key={assignment.id}
+      className="calendar-task"
+      aria-label={`Open assignment ${assignment.data.title}`}
+      onClick={() => location.assign(`#assignment/${assignment.id}`)}
+    >
+      <span>{assignment.data.time}</span>📚 {assignment.data.title}
+    </button>
+  );
   const move = (direction: number) => {
     if (active === 'month' || active === 'year') {
       date.setUTCDate(1);
@@ -244,7 +274,7 @@ export function CalendarView({
                     return (
                       <span
                         key={d}
-                        className={`${d.slice(0, 7) !== first.slice(0, 7) ? 'muted' : ''} ${byDate.has(d) ? 'has-tasks' : ''} ${d === dateKey() ? 'today-cell' : ''}`}
+                        className={`${d.slice(0, 7) !== first.slice(0, 7) ? 'muted' : ''} ${byDate.has(d) || assignmentByDate.has(d) ? 'has-tasks' : ''} ${d === dateKey() ? 'today-cell' : ''}`}
                       >
                         {Number(d.slice(-2))}
                       </span>
@@ -289,6 +319,9 @@ export function CalendarView({
                   {Number(d.slice(-2))}
                 </button>
                 {(byDate.get(d) || []).slice(0, 5).map(event)}
+                {(assignmentByDate.get(d) || [])
+                  .slice(0, 5)
+                  .map(assignmentEvent)}
                 {(byDate.get(d)?.length || 0) > 5 && (
                   <button
                     className="subtle-button"
@@ -328,6 +361,9 @@ export function CalendarView({
                 </h3>
                 <div className="all-day">
                   {(byDate.get(d) || []).filter((t) => !t.data.time).map(event)}
+                  {(assignmentByDate.get(d) || [])
+                    .filter((item) => !item.data.time)
+                    .map(assignmentEvent)}
                 </div>
                 {Array.from({ length: 24 }, (_, hour) => (
                   <div className="hour-slot" key={hour}>
@@ -339,6 +375,13 @@ export function CalendarView({
                           t.data.time,
                       )
                       .map(event)}
+                    {(assignmentByDate.get(d) || [])
+                      .filter(
+                        (item) =>
+                          Number(item.data.time.split(':')[0]) === hour &&
+                          item.data.time,
+                      )
+                      .map(assignmentEvent)}
                   </div>
                 ))}
               </div>
@@ -503,7 +546,7 @@ export function CalendarView({
             ? [anchor]
             : [
                 ...new Set(
-                  visible
+                  [...visible, ...assignments]
                     .filter(
                       (t) => active !== 'upcoming' || t.data.due >= anchor,
                     )
@@ -527,9 +570,10 @@ export function CalendarView({
                     <span className="muted">{t.data.duration}m</span>
                   </div>
                 ))}
+              {(assignmentByDate.get(d) || []).map(assignmentEvent)}
             </section>
           ))}
-          {visible.length === 0 && (
+          {visible.length === 0 && assignments.length === 0 && (
             <Empty icon={<CalendarDays />} title="A clear calendar">
               Scheduled tasks appear here.
             </Empty>
@@ -561,6 +605,9 @@ export function Calendar({
       </div>
       <CalendarView
         tasks={store.entities.filter((e) => e.kind === 'task') as Task[]}
+        assignments={
+          store.entities.filter((e) => e.kind === 'assignment') as Assignment[]
+        }
         onEdit={onEdit}
       />
     </>

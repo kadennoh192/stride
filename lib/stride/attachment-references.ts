@@ -28,6 +28,8 @@ function collectAttachmentReferences(
   const visit = (field: Field) => {
     if (field.kind === 'block' && field.key === 'file') file(field.value);
     else if (field.kind === 'row') row({ [field.key]: field.value });
+    else if (field.kind === 'assignment' && field.key === 'attachments')
+      fileList(field.value);
     else if (field.kind === 'template') {
       if (field.key === 'row') row(field.value);
       else if (field.key === 'blocks' && Array.isArray(field.value))

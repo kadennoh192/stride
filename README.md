@@ -1,10 +1,10 @@
 # Stride
 
-Personal productivity workspace built with React, TypeScript, vinext/Sites, IndexedDB, D1, and R2. The current release is a private development preview. Production readiness has **not** been established.
+Personal productivity workspace built with React, TypeScript, vinext/Sites, IndexedDB, D1, and R2. Stride combines tasks, projects, School planning, habits and an overall streak, focus, optional wellness tools, cross-feature Insights, alarms, pages, and databases. The current release is a private development preview. Production readiness has **not** been established.
 
 ## Development
 
-Use Node 22.13+ and `npm ci`. Run `npm run dev` for local development, `npm run typecheck`, `npm run lint`, and `npm test` for validation. `npm run build` produces the Worker, client bundles, and a versioned offline asset inventory. `npm start` serves the production build locally.
+Use Node 22.13+ and `npm ci`. Run `npm run dev` for local development, `npm run typecheck`, `npm run lint`, and `npm test` for validation. `npm run build` validates the current entry in `releases.json`, produces the Worker and client bundles, emits an uncached `version.json`, and creates a versioned offline asset inventory. `npm start` serves the production build locally.
 
 The test suite includes isolated IndexedDB databases, simulated failures, a real local D1/R2 runtime, and mocked authentication responses. It never uses a production account or sends real push notifications. `npm run benchmark` is an isolated synthetic storage diagnostic, not browser or iPhone performance certification.
 

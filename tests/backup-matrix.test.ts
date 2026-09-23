@@ -18,6 +18,7 @@ import {
 } from '../lib/stride/backup';
 import { defaults, taskData, type Property } from '../lib/stride/types';
 import { kinds } from '../lib/stride/validation';
+import { defaultThresholds } from '../lib/stride/school';
 
 void test('complete archive restores every record kind and attachment-bearing structure', async () => {
   const sourceOwner = 'matrix-source';
@@ -301,6 +302,100 @@ void test('complete archive restores every record kind and attachment-bearing st
       id: 'filePurge_old-file',
       kind: 'fileTombstone',
       data: { attachment: 'old-file' },
+    },
+    {
+      id: 'course-main',
+      kind: 'course',
+      data: {
+        title: 'Mathematics',
+        instructor: 'A. Teacher',
+        color: '#5268e8',
+        term: 'Fall',
+        targetGrade: 85,
+        gradingMode: 'weighted',
+        categories: [
+          { id: 'quizzes', title: 'Quizzes', weight: 40 },
+          { id: 'exams', title: 'Exams', weight: 60 },
+        ],
+        thresholds: defaultThresholds,
+      },
+    },
+    {
+      id: 'assignment-main',
+      kind: 'assignment',
+      data: {
+        title: 'Quiz 1',
+        course: 'course-main',
+        type: 'Quiz',
+        description: 'Algebra',
+        priority: 2,
+        status: 'Done',
+        due: '2026-09-07',
+        time: '11:00',
+        timezone: 'America/Toronto',
+        attachments: [{ id: 'block-file', name: 'block.txt' }],
+        category: 'quizzes',
+        score: 8,
+        possible: 10,
+        expectedScore: null,
+        reminders: ['due'],
+        alarms: [],
+        completedAt: '2026-09-07T15:00:00.000Z',
+      },
+    },
+    {
+      id: 'alarm-main',
+      kind: 'alarm',
+      data: {
+        label: 'Study',
+        timezone: 'America/Toronto',
+        enabled: true,
+        sound: 'chime',
+        volume: 0.7,
+        vibration: true,
+        snoozeMinutes: 10,
+        nextOccurrence: '2026-12-01T14:00:00.000Z',
+        linkedKind: '',
+        linkedId: '',
+        acknowledgedOccurrence: '',
+        respectQuietHours: false,
+        schedule: { rule: 'once', date: '2026-12-01', time: '09:00' },
+      },
+    },
+    {
+      id: 'shower-main',
+      kind: 'showerSession',
+      data: {
+        at: '2026-09-07T15:00:00.000Z',
+        duration: 480,
+        targetMinutes: 10,
+        flowLitresPerMinute: 9,
+      },
+    },
+    {
+      id: 'checkin-main',
+      kind: 'checkIn',
+      data: {
+        date: '2026-09-07',
+        mood: 4,
+        energy: 3,
+        stress: 2,
+        sleepHours: 8,
+        note: 'Good day',
+      },
+    },
+    {
+      id: 'streak-2026-09-07',
+      kind: 'streakDay',
+      data: {
+        date: '2026-09-07',
+        scheduled: 1,
+        completed: 1,
+        requirement: 1,
+        outcome: 'complete',
+        streak: 1,
+        freezes: 0,
+      },
     },
   ];
 

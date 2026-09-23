@@ -2,18 +2,18 @@
 
 ## Boundaries
 
-- `lib/stride/types.ts`: a kind-discriminated entity union plus kind-specific creation and edit payloads for tasks, projects, pages, blocks, databases, habits, views, templates, and activity records.
+- `lib/stride/types.ts`: a kind-discriminated entity union plus kind-specific creation and edit payloads for tasks, projects, courses, assignments, habits, alarms, streak days, check-ins, shower sessions, pages, blocks, databases, views, templates, and activity records.
 - `lib/stride/validation.ts`: shared runtime validation for local edits, sync operations, and imports, including per-kind shapes and safe link/embed boundaries.
-- `lib/stride/domain.ts`, `formula.ts`, `timer.ts`: scheduling, dates, safe URLs, expressions, and persistent timer transitions.
+- `lib/stride/domain.ts`, `formula.ts`, `timer.ts`, `school.ts`, `streak.ts`, `alarms.ts`, and `shower.ts`: scheduling, dates, safe URLs, expressions, grades, deterministic streaks, alarm recurrence, and persistent timer transitions.
 - `lib/stride/storage.ts`, `field-index.ts`: versioned local persistence, field indexes, operations, recovery, and incremental entity materialization.
 - `lib/stride/store.tsx`: account lifecycle, UI subscriptions, sync retries, undo, and global timer completion.
-- `components/stride/features`: task, calendar, page, database, productivity, and settings modules. Editors are lazy loaded.
+- `components/stride/features`: task, School, habit, wellness, alarm, calendar, page, database, productivity, and settings modules. Editors are lazy loaded.
 - `lib/server` and `app/api`: session verification, authorization, D1 operations, R2 attachments, and reminder scheduling.
 - `workers/reminders`: independently deployed scheduled Worker, with signed dispatch requests.
 
 ## Local storage contract
 
-The IndexedDB database `stride-workspace` is schema version 7. Portable snapshots and the sync/export protocol remain version 2; those versions are independent. Schema 4 added tombstone-safe active-record indexes and ID-inclusive keyset indexes; schema 5 added an owner/kind/active/due index for bounded task startup reads; schema 6 added bounded trigram search indexes plus a safe overflow path for unusually long text; schema 7 adds the attachment-deletion ledger. Upgrades create stores and rebuild derived active, routing, due, and search values without rewriting canonical fields or operation history.
+The IndexedDB database `stride-workspace` is schema version 8. Portable snapshots and sync use protocol version 3; backup archives use version 4 while retaining readers for the prior formats. Schema 4 added tombstone-safe active-record indexes and ID-inclusive keyset indexes; schema 5 added an owner/kind/active/due index for bounded task startup reads; schema 6 added bounded trigram search indexes plus a safe overflow path for unusually long text; schema 7 added the attachment-deletion ledger; schema 8 adds the School, alarm, wellness, and streak entity families without rewriting canonical records. Upgrades create stores and rebuild derived active, routing, due, and search values without discarding operation history.
 
 `meta` contains owner identity, logical clock, sync cursor, and a revision used to invalidate caches across tabs. `fields`, `records`, `operations`, and `conflicts` are indexed by owner. Records also have kind, container, and due-date indexes. Files, outgoing upload and deletion queues, and recovery snapshots have separate stores.
 
@@ -27,13 +27,13 @@ Database rendering, filtering, sorting, grouping, and entry details share one co
 
 Custom page and row templates are normalized into complete creation payloads before persistence. Page activation generates fresh page/block identities, canonical order, and ownership for the entire block set, then validates every record before the atomic edit. Row activation discards stale deletion state, retargets the chosen database, and relies on the same schema-aware transaction validation as direct entry creation. Partial legacy templates receive safe defaults; malformed or unsafe embedded content aborts before any workspace mutation.
 
-Version-one data migrates to unclaimed guest storage. Version-two snapshots migrate to indexed owner stores. Version-three record indexes are backfilled in place for keyset paging. Later additive upgrades create missing indexes and the schema-seven deletion ledger. The old stores remain intact and a recovery snapshot is retained. Legacy attachment bytes remain available. A blocked migration asks the user to close older tabs rather than deleting data.
+Version-one data migrates to unclaimed guest storage. Version-two snapshots migrate to indexed owner stores. Version-three record indexes are backfilled in place for keyset paging. Later additive upgrades create missing indexes, the schema-seven deletion ledger, and the schema-eight recovery marker. The old stores remain intact and a recovery snapshot is retained. Legacy attachment bytes remain available. A blocked migration asks the user to close older tabs rather than deleting data.
 
 Task routes can render from an owner-isolated, bounded startup projection while the complete conflict and sync snapshot hydrates in the background. The projection loads up to 100 undated tasks, 300 tasks due through the next 90 days, route-scoped project tasks, navigation records, settings, and recent completions. Non-task features wait for the full snapshot, while workspace search independently reads active searchable records through owner/kind indexes and returns at most 50 substring matches with explicit loading, empty, and failure states. Partial task counts remain labelled while hydration is in progress. Storage also exposes tombstone-safe keyset pagination that seeks from a stable record ID without walking earlier rows. Removing the background full-owner hydration, moving feature stores onto paged queries, and adding a query-selective text index if reference-device measurements require it remain release work.
 
 ## Sync protocol
 
-`POST /api/sync` requires a same-origin request and a verified Supabase session. Owner IDs supplied by clients must match that verified account. Requests contain `{version:2, owner, cursor, changes}`. Each change has a stable operation ID and fields with logical stamps, previous field stamps, and an observed entity revision. Acknowledgments remove operations only after durable cloud acceptance. A response includes at most 100 ordered changes and a continuation cursor.
+`POST /api/sync` requires a same-origin request and a verified Supabase session. Owner IDs supplied by clients must match that verified account. Current requests contain `{version:3, owner, cursor, changes}`. Version-two clients receive an explicit upgrade response before they can submit version-three entity kinds. Each change has a stable operation ID and fields with logical stamps, previous field stamps, and an observed entity revision. Acknowledgments remove operations only after durable cloud acceptance. A response includes at most 100 ordered changes and a continuation cursor.
 
 D1 commits field updates, change history, deduplication IDs, and reminder scheduling intent together. Reusing an operation ID with different content is rejected. Replays retry pending scheduling work without duplicating the activity record. Local operation sequence is preserved across restarts.
 
@@ -44,6 +44,18 @@ Task completion events use a SHA-256-derived ID from task identity and occurrenc
 Fixed daily, weekly, weekday, monthly, and yearly recurrences skip missed slots and choose the first date strictly after the completion day in the task's timezone. Monthly/yearly schedules retain their original day anchor across short months. `after-days` remains completion-relative rather than calendar-anchored.
 
 Retry triggers include connectivity, foregrounding, queued edits, and a bounded backoff. An authentication outage returns 503 rather than switching the workspace to guest. Account APIs never enter the service worker cache.
+
+## School, streaks, wellness, and Insights
+
+Courses own grading mode, optional weighted categories, editable grade thresholds, target grade, term, instructor, and color. Assignments reference a valid course, support date/time/zone, workflow state, priority, type, notes, reminders, alarms, scores, expected scores, and attachment references. Grade calculations exclude missing scores and only include ungraded work in projections when an expected score is present. Assignments participate in global search and calendar indexes; history, Trash, sync, and backup use the ordinary entity pipeline.
+
+The overall habit streak is derived from scheduled habits and deterministic daily logs in the workspace timezone. Non-scheduled days are neutral. Each seven successful days awards one freeze up to the two-freeze cap; the next eligible missed day consumes a freeze automatically. Materialized `streakDay` records make backfill and cross-device convergence inspectable while the calculation remains reproducible from habit history.
+
+Optional check-ins and shower sessions are ordinary validated entities. The running shower timer is kept in settings with its original start timestamp, so reloads and offline use do not reset elapsed time and it can coexist with the focus timer. Insights reads task and assignment completions, focus sessions, habit/streak outcomes, grade data, showers, and check-ins. Paired mood/focus summaries only appear with enough matching data and remain descriptive.
+
+## Updates
+
+`releases.json` is the changelog source. The release preparation script requires the package version to have valid dated metadata and generates an immutable source build identifier. Production builds emit `/version.json` with `Cache-Control: no-store`. The client checks on startup, on a six-hour foreground interval, and on demand. A waiting service worker activates only after the local tab and other Stride tabs report no unsaved draft. The previous cache remains available until activation, and a failed or offline check leaves the running build untouched.
 
 ## Attachments and backups
 

@@ -19,8 +19,8 @@ import {
   shiftDate,
 } from './types';
 import { validateEntity, validateGraph, validField } from './validation';
-export const VERSION = 7;
-export const SNAPSHOT_VERSION = 2;
+export const VERSION = 8;
+export const SNAPSHOT_VERSION = 3;
 export interface Snapshot {
   version: number;
   fields: Record<string, Field>;
@@ -71,6 +71,8 @@ const SEARCHABLE_KINDS: Kind[] = [
   'database',
   'habit',
   'block',
+  'course',
+  'assignment',
 ];
 const SEARCH_INDEX_CHARACTERS = 4096;
 const cached = new Map<string, { snapshot: Snapshot; revision: number }>();
@@ -229,6 +231,70 @@ export function openDB() {
         for (const e of materialize(snapshot.fields, true))
           records.put(indexedRecord(owner, e));
       };
+      if (event.oldVersion >= 3 && event.oldVersion < 8) {
+        const metas = tx.objectStore('meta').openCursor();
+        metas.onsuccess = () => {
+          const cursor = metas.result;
+          if (!cursor) return;
+          const previous = cursor.value as StoredMeta;
+          const owner = previous.owner;
+          const fields = tx.objectStore('fields').index('owner').getAll(owner);
+          const operations = tx
+            .objectStore('operations')
+            .index('owner')
+            .getAll(owner);
+          const conflicts = tx
+            .objectStore('conflicts')
+            .index('owner')
+            .getAll(owner);
+          const files = tx.objectStore('files').getAll();
+          const preserve = () => {
+            if (
+              !fields.readyState ||
+              fields.readyState !== 'done' ||
+              operations.readyState !== 'done' ||
+              conflicts.readyState !== 'done' ||
+              files.readyState !== 'done'
+            )
+              return;
+            const { revision: _revision, ...meta } = previous;
+            const history = (operations.result as StoredOperation[]).sort(
+              (a, b) => a.sequence - b.sequence,
+            );
+            const snapshot: Snapshot = {
+              ...meta,
+              fields: Object.fromEntries(
+                (fields.result as StoredField[]).map(
+                  ({ owner: _owner, fieldKey, ...field }) => [fieldKey, field],
+                ),
+              ),
+              history: history.map((operation) => operation.change),
+              outbox: history
+                .filter((operation) => operation.pending === 1)
+                .map((operation) => operation.change),
+              conflicts: conflicts.result as Conflict[],
+            };
+            tx.objectStore('recovery').put(
+              {
+                snapshot,
+                files: (files.result as LocalFile[]).filter(
+                  (file) => file.owner === owner,
+                ),
+              },
+              `${owner}:migration-v8`,
+            );
+            tx.objectStore('meta').put({
+              ...previous,
+              version: SNAPSHOT_VERSION,
+            });
+          };
+          fields.onsuccess = preserve;
+          operations.onsuccess = preserve;
+          conflicts.onsuccess = preserve;
+          files.onsuccess = preserve;
+          cursor.continue();
+        };
+      }
       const old = tx.objectStore('state').openCursor();
       old.onsuccess = () => {
         const cursor = old.result;
@@ -985,11 +1051,22 @@ export function applyEdits(s: Snapshot, edits: Edit[], label: string) {
   const changedDatabases = new Set(
     edits.filter((edit) => edit.kind === 'database').map((edit) => edit.id),
   );
+  const changedCourses = new Set(
+    edits.filter((edit) => edit.kind === 'course').map((edit) => edit.id),
+  );
   if (changedDatabases.size)
     for (const entity of entitiesFromFields(s.fields))
       if (
         entity.kind === 'row' &&
         changedDatabases.has(entity.data.database) &&
+        !existing.has(entity.id)
+      )
+        graphRecords.push(entity);
+  if (changedCourses.size)
+    for (const entity of entitiesFromFields(s.fields))
+      if (
+        entity.kind === 'assignment' &&
+        changedCourses.has(entity.data.course) &&
         !existing.has(entity.id)
       )
         graphRecords.push(entity);

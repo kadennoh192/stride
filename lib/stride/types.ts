@@ -1,3 +1,4 @@
+import type { AlarmSchedule } from './alarms';
 export type Kind =
   | 'task'
   | 'project'
@@ -15,7 +16,13 @@ export type Kind =
   | 'completion'
   | 'template'
   | 'favorite'
-  | 'fileTombstone';
+  | 'fileTombstone'
+  | 'course'
+  | 'assignment'
+  | 'alarm'
+  | 'showerSession'
+  | 'checkIn'
+  | 'streakDay';
 export interface Data {
   [key: string]: unknown;
   title?: string;
@@ -332,6 +339,107 @@ export type FileTombstone = BaseEntity<
   'fileTombstone',
   { attachment: string; [key: string]: unknown }
 >;
+export type GradingMode = 'none' | 'points' | 'percent' | 'weighted';
+export interface GradeCategory {
+  id: string;
+  title: string;
+  weight: number;
+}
+export interface GradeThreshold {
+  letter: string;
+  minimum: number;
+}
+export type Course = BaseEntity<
+  'course',
+  {
+    title: string;
+    instructor: string;
+    color: string;
+    term: string;
+    targetGrade: number | null;
+    gradingMode: GradingMode;
+    categories: GradeCategory[];
+    thresholds: GradeThreshold[];
+    [key: string]: unknown;
+  }
+>;
+export type Assignment = BaseEntity<
+  'assignment',
+  {
+    title: string;
+    course: string;
+    type: string;
+    description: string;
+    priority: number;
+    status: 'To do' | 'In progress' | 'Done';
+    due: string;
+    time: string;
+    timezone: string;
+    attachments: { id: string; name: string }[];
+    category: string;
+    score: number | null;
+    possible: number;
+    expectedScore: number | null;
+    reminders: string[];
+    alarms: string[];
+    completedAt: string;
+    [key: string]: unknown;
+  }
+>;
+export type Alarm = BaseEntity<
+  'alarm',
+  {
+    label: string;
+    timezone: string;
+    enabled: boolean;
+    sound: string;
+    volume: number;
+    vibration: boolean;
+    snoozeMinutes: number;
+    nextOccurrence: string;
+    linkedKind: '' | 'task' | 'assignment';
+    linkedId: string;
+    acknowledgedOccurrence: string;
+    respectQuietHours: boolean;
+    schedule: AlarmSchedule;
+    [key: string]: unknown;
+  }
+>;
+export type ShowerSession = BaseEntity<
+  'showerSession',
+  {
+    at: string;
+    duration: number;
+    targetMinutes: number;
+    flowLitresPerMinute: number;
+    [key: string]: unknown;
+  }
+>;
+export type CheckIn = BaseEntity<
+  'checkIn',
+  {
+    date: string;
+    mood: number;
+    energy: number;
+    stress: number;
+    sleepHours: number;
+    note: string;
+    [key: string]: unknown;
+  }
+>;
+export type StreakDay = BaseEntity<
+  'streakDay',
+  {
+    date: string;
+    scheduled: number;
+    completed: number;
+    requirement: number;
+    outcome: 'neutral' | 'complete' | 'freeze' | 'missed';
+    streak: number;
+    freezes: number;
+    [key: string]: unknown;
+  }
+>;
 export type Entity =
   | Task
   | Project
@@ -349,7 +457,13 @@ export type Entity =
   | Completion
   | Template
   | Favorite
-  | FileTombstone;
+  | FileTombstone
+  | Course
+  | Assignment
+  | Alarm
+  | ShowerSession
+  | CheckIn
+  | StreakDay;
 export type EntityOf<K extends Kind> = Extract<Entity, { kind: K }>;
 export type EntityData<K extends Kind> = EntityOf<K>['data'];
 export type EntityPatch<K extends Kind> = Partial<EntityData<K>> & Data;
@@ -388,6 +502,20 @@ export interface Settings {
   calendarView: string;
   calendarSpan: number;
   calendarShowCompleted: boolean;
+  educationLevel: 'gradeSchool' | 'highSchool' | 'university' | 'custom';
+  schoolSetup: boolean;
+  alarmEditorMode: 'basic' | 'advanced';
+  alarmSound: string;
+  alarmVolume: number;
+  alarmVibration: boolean;
+  alarmSnoozeMinutes: number;
+  streakDailyRequirement: number;
+  optionalModulesOnboarded: boolean;
+  showerEnabled: boolean;
+  checkInsEnabled: boolean;
+  showerTargetMinutes: number;
+  showerFlowLitresPerMinute: number;
+  checkInReminder: string;
   [key: string]: unknown;
 }
 export const defaults: Settings = {
@@ -422,6 +550,20 @@ export const defaults: Settings = {
   calendarView: 'month',
   calendarSpan: 4,
   calendarShowCompleted: false,
+  educationLevel: 'highSchool',
+  schoolSetup: false,
+  alarmEditorMode: 'basic',
+  alarmSound: 'chime',
+  alarmVolume: 0.7,
+  alarmVibration: true,
+  alarmSnoozeMinutes: 10,
+  streakDailyRequirement: 1,
+  optionalModulesOnboarded: false,
+  showerEnabled: false,
+  checkInsEnabled: false,
+  showerTargetMinutes: 10,
+  showerFlowLitresPerMinute: 9,
+  checkInReminder: '',
 };
 export function uid() {
   return crypto.randomUUID();

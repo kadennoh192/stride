@@ -35,6 +35,8 @@ import {
 import { downloadBlob } from '@/lib/stride/files';
 import { Field, Select, ReorderButtons } from '../forms';
 import { Modal } from '../primitives';
+import { currentRelease, useUpdates } from '@/lib/stride/updates';
+import releases from '@/releases.json';
 const navigation = [
   'inbox',
   'today',
@@ -46,6 +48,10 @@ const navigation = [
   'databases',
   'habits',
   'focus',
+  'school',
+  'alarms',
+  'shower',
+  'checkIns',
   'matrix',
   'countdowns',
   'insights',
@@ -81,6 +87,7 @@ function contrastRatio(left: string, right: string) {
 }
 export default function Settings() {
   const store = useStride();
+  const updates = useUpdates();
   const [tab, setTab] = useState('appearance');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -264,10 +271,13 @@ export default function Settings() {
             ['navigation', 'Navigation', SettingsIcon],
             ['account', 'Account & sync', Cloud],
             ['notifications', 'Notifications', Bell],
+            ['school', 'School & habits', SettingsIcon],
+            ['modules', 'Optional modules', Sparkles],
             ['watch', 'Apple Watch', Watch],
             ['ai', 'Gemini input', Sparkles],
             ['backup', 'Backup & restore', Download],
             ['data', 'Storage & recovery', Shield],
+            ['about', 'About & Updates', SettingsIcon],
           ].map(([id, label, Icon]) => {
             const I = Icon as typeof Cloud;
             return (
@@ -286,6 +296,184 @@ export default function Settings() {
           })}
         </nav>
         <section className="settings-content">
+          {tab === 'about' && (
+            <>
+              <h2>About & Updates</h2>
+              <p>
+                Current version {currentRelease.version} · build{' '}
+                {currentRelease.build}
+              </p>
+              <output>
+                Update status: {updates.status}
+                {updates.message ? ` · ${updates.message}` : ''}
+              </output>
+              <button
+                className="secondary-button"
+                onClick={() => void updates.check()}
+              >
+                Check for updates
+              </button>
+              {updates.waiting && (
+                <section className="school-column">
+                  <h3>Update ready</h3>
+                  <p>
+                    {updates.deployed?.summary || 'A new version is ready.'}
+                  </p>
+                  {updates.deployed &&
+                    Object.entries(updates.deployed.changes).map(
+                      ([category, items]) => (
+                        <div key={category}>
+                          <h4>{category}</h4>
+                          <ul>
+                            {items.map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ),
+                    )}
+                  <button
+                    className="primary-button"
+                    onClick={() => void updates.activate()}
+                  >
+                    Update now
+                  </button>
+                </section>
+              )}
+              <h3>Recent releases</h3>
+              {releases.slice(0, 2).map((release) => (
+                <section key={release.version}>
+                  <h4>
+                    {release.version} · {release.date}
+                  </h4>
+                  <p>{release.summary}</p>
+                </section>
+              ))}
+              <details>
+                <summary>Full changelog</summary>
+                {releases.map((release) => (
+                  <section key={release.version}>
+                    <h4>
+                      {release.version} · {release.date}
+                    </h4>
+                    <p>{release.summary}</p>
+                    {Object.entries(release.changes).map(
+                      ([category, items]) => (
+                        <div key={category}>
+                          <h5>{category}</h5>
+                          <ul>
+                            {(items as string[]).map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ),
+                    )}
+                  </section>
+                ))}
+              </details>
+            </>
+          )}
+          {tab === 'school' && (
+            <>
+              <h2>School & habits</h2>
+              <Field label="Education level">
+                <select
+                  value={store.settings.educationLevel}
+                  onChange={(event) =>
+                    setting('educationLevel', event.target.value)
+                  }
+                >
+                  <option value="gradeSchool">Grade school</option>
+                  <option value="highSchool">High school</option>
+                  <option value="university">University</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </Field>
+              <p>
+                Changing education level adjusts labels and suggestions.
+                Existing courses, assignments, and grades keep their values.
+              </p>
+              <Field label="Habits needed for daily streak">
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={store.settings.streakDailyRequirement}
+                  onChange={(event) =>
+                    setting(
+                      'streakDailyRequirement',
+                      Number(event.target.value),
+                    )
+                  }
+                />
+              </Field>
+            </>
+          )}
+          {tab === 'modules' && (
+            <>
+              <h2>Optional modules</h2>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={store.settings.showerEnabled}
+                  onChange={(event) =>
+                    setting('showerEnabled', event.target.checked)
+                  }
+                />{' '}
+                Show Shower
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={store.settings.checkInsEnabled}
+                  onChange={(event) =>
+                    setting('checkInsEnabled', event.target.checked)
+                  }
+                />{' '}
+                Show Check-ins
+              </label>
+              <p>
+                Turning a module off hides its navigation and analytics while
+                keeping its records.
+              </p>
+              <Field label="Shower target (minutes)">
+                <input
+                  type="number"
+                  min="1"
+                  max="240"
+                  value={store.settings.showerTargetMinutes}
+                  onChange={(event) =>
+                    setting('showerTargetMinutes', Number(event.target.value))
+                  }
+                />
+              </Field>
+              <Field label="Estimated flow (litres per minute)">
+                <input
+                  type="number"
+                  min="0.1"
+                  max="100"
+                  step="0.1"
+                  value={store.settings.showerFlowLitresPerMinute}
+                  onChange={(event) =>
+                    setting(
+                      'showerFlowLitresPerMinute',
+                      Number(event.target.value),
+                    )
+                  }
+                />
+              </Field>
+              <Field label="Daily check-in reminder">
+                <input
+                  type="time"
+                  value={store.settings.checkInReminder}
+                  onChange={(event) =>
+                    setting('checkInReminder', event.target.value)
+                  }
+                />
+              </Field>
+            </>
+          )}
           {tab === 'appearance' && (
             <>
               <h2>Appearance</h2>
@@ -654,6 +842,91 @@ export default function Settings() {
           {tab === 'notifications' && (
             <>
               <h2>Notifications</h2>
+              <Field label="Alarm editing mode">
+                <select
+                  value={store.settings.alarmEditorMode}
+                  onChange={(event) =>
+                    setting('alarmEditorMode', event.target.value)
+                  }
+                >
+                  <option value="basic">Basic</option>
+                  <option value="advanced">Advanced</option>
+                </select>
+              </Field>
+              <p>
+                Switching to Basic hides advanced timing controls but keeps
+                existing schedules active.
+              </p>
+              <Field label="Default alarm sound">
+                <select
+                  value={store.settings.alarmSound}
+                  onChange={(event) =>
+                    setting('alarmSound', event.target.value)
+                  }
+                >
+                  <option value="chime">Chime</option>
+                  <option value="bell">Bell</option>
+                  <option value="silent">Silent</option>
+                </select>
+              </Field>
+              <Field label="Default volume">
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={store.settings.alarmVolume}
+                  onChange={(event) =>
+                    setting('alarmVolume', Number(event.target.value))
+                  }
+                />
+              </Field>
+              <Field label="Default snooze (minutes)">
+                <input
+                  type="number"
+                  min="1"
+                  max="120"
+                  value={store.settings.alarmSnoozeMinutes}
+                  onChange={(event) =>
+                    setting('alarmSnoozeMinutes', Number(event.target.value))
+                  }
+                />
+              </Field>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={store.settings.alarmVibration}
+                  onChange={(event) =>
+                    setting('alarmVibration', event.target.checked)
+                  }
+                />{' '}
+                Vibrate when supported
+              </label>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  try {
+                    const context = new AudioContext();
+                    const oscillator = context.createOscillator();
+                    const gain = context.createGain();
+                    oscillator.connect(gain);
+                    gain.connect(context.destination);
+                    gain.gain.value = store.settings.alarmVolume * 0.15;
+                    oscillator.frequency.value = 660;
+                    oscillator.start();
+                    oscillator.stop(context.currentTime + 0.15);
+                    oscillator.onended = () => void context.close();
+                    setMessage('Alarm audio is ready on this device.');
+                  } catch {
+                    setMessage(
+                      'Audio is blocked here. Alarms will still show visually.',
+                    );
+                  }
+                }}
+              >
+                Test alarm audio
+              </button>
               <p className="muted">
                 iPhone and iPad need Stride added to the Home Screen before
                 background notifications can be enabled. Delivery depends on the

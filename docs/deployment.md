@@ -54,7 +54,11 @@ Deploy `workers/reminders/wrangler.jsonc` separately to Cloudflare Workers. It i
 
 The scheduled trigger runs once per minute and calls `/api/reminders` with a signed request. Verify the callback can reach the application through its access gate. Configure alerts for dispatch failures and job backlog, using counts and IDs without task titles, descriptions, email contents, API keys, or push payloads.
 
-Enable notifications from Settings on each device. On iPhone, Web Push requires a supported Home Screen web app; see [Apple's Web Push documentation](https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers). Do not promise closed-app offline alarms or guaranteed OS delivery.
+Enable notifications from Settings on each device. Task reminders, assignment reminders, check-in and shower nudges, and alarms share this scheduler. Alarms can bypass quiet hours when their own setting allows it, and notification actions call the authenticated `/api/alarms` endpoint for idempotent snooze or dismiss. Keep the visible in-app alarm overlay as the fallback when audio, vibration, push, or notification actions are unavailable. On iPhone, Web Push requires a supported Home Screen web app; see [Apple's Web Push documentation](https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers). Do not promise closed-app offline alarms or guaranteed OS delivery.
+
+## Release metadata and client updates
+
+Add a dated, user-facing entry to `releases.json` and bump `package.json` before building. `npm run release:validate` rejects missing or malformed metadata. `npm run build` generates the source build identifier, the client asset build, `/version.json`, and its no-cache header. Preserve the preceding publication and cloud backup until the new build has passed installed-PWA update acceptance. If activation fails, keep serving the previous build; do not force a waiting worker past an unsaved local or cross-tab draft.
 
 ## Apple Watch
 
