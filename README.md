@@ -1,6 +1,6 @@
 # Stride
 
-Personal productivity workspace built with React, TypeScript, vinext/Sites, IndexedDB, D1, and R2. Stride combines tasks, projects, School planning, habits and an overall streak, focus, optional wellness tools, cross-feature Insights, alarms, pages, and databases. The current release is a private development preview. Production readiness has **not** been established.
+Personal productivity workspace built with React, TypeScript, vinext/Sites, IndexedDB, D1, and R2. Stride combines tasks, projects, School planning, a local Smart Day Planner, configurable Today dashboard, weekly review, habits and an overall streak, focus, optional wellness tools, cross-feature Insights, alarms, pages, and databases. The current release is a private development preview. Production readiness has **not** been established.
 
 ## Development
 

@@ -3301,3 +3301,52 @@ progress::-webkit-progress-value {
   width: min(100%, 420px);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
 }
+.dashboard-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin: 1rem 0;
+}
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+.dashboard-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1rem;
+  min-width: 0;
+}
+.dashboard-card h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.08rem;
+}
+.dashboard-wide {
+  grid-column: 1/-1;
+}
+.dashboard-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+  width: 100%;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+.plan-preview-list {
+  max-height: 45vh;
+  overflow: auto;
+}
+.planner-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin: 1rem 0;
+}
+.planned-event {
+  border-style: dashed;
+}

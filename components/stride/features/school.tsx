@@ -48,6 +48,8 @@ const blankAssignment = (
   status: 'To do',
   due: '',
   time: '',
+  plannedStart: '',
+  duration: 30,
   timezone,
   attachments: [],
   category: '',
@@ -353,6 +355,7 @@ function AssignmentEditor({
             }
             const updated = {
               ...data,
+              plannedStart: data.status === 'Done' ? '' : data.plannedStart,
               attachments,
               completedAt:
                 data.status === 'Done'
@@ -419,6 +422,38 @@ function AssignmentEditor({
               type="time"
               value={data.time}
               onChange={(event) => set('time', event.target.value)}
+            />
+          </Field>
+          <Field label="Estimated duration (minutes)">
+            <input
+              type="number"
+              min={1}
+              max={10080}
+              value={data.duration ?? 30}
+              onChange={(event) => set('duration', Number(event.target.value))}
+            />
+          </Field>
+          <Field label="Planned start">
+            <input
+              type="datetime-local"
+              value={
+                data.plannedStart
+                  ? new Date(
+                      Date.parse(data.plannedStart) -
+                        new Date(data.plannedStart).getTimezoneOffset() * 60000,
+                    )
+                      .toISOString()
+                      .slice(0, 16)
+                  : ''
+              }
+              onChange={(event) =>
+                set(
+                  'plannedStart',
+                  event.target.value
+                    ? new Date(event.target.value).toISOString()
+                    : '',
+                )
+              }
             />
           </Field>
           <Field label="Timezone">

@@ -21,6 +21,7 @@ import { useStride } from '@/lib/stride/store';
 import { taskData, dateKey, type Task, type Project } from '@/lib/stride/types';
 import { dependencyCycle, filterTasks } from '@/lib/stride/domain';
 import { parseTask } from '@/lib/stride/ai';
+import { estimateSuggestion } from '@/lib/stride/planner';
 import { Modal, Empty } from '../primitives';
 import { Field, Select, CheckList } from '../forms';
 import { CalendarView } from './views';
@@ -232,6 +233,28 @@ export function TaskEditor({
               onChange={(e) => update({ time: e.target.value })}
             />
           </Field>
+          <Field label="Planned start (separate from due)">
+            <input
+              type="datetime-local"
+              value={
+                data.plannedStart
+                  ? new Date(
+                      Date.parse(data.plannedStart) -
+                        new Date(data.plannedStart).getTimezoneOffset() * 60000,
+                    )
+                      .toISOString()
+                      .slice(0, 16)
+                  : ''
+              }
+              onChange={(e) =>
+                update({
+                  plannedStart: e.target.value
+                    ? new Date(e.target.value).toISOString()
+                    : '',
+                })
+              }
+            />
+          </Field>
           <Field label="Priority">
             <Select
               value={stringValue(data.priority)}
@@ -268,6 +291,25 @@ export function TaskEditor({
               onChange={(e) => update({ duration: Number(e.target.value) })}
             />
           </Field>
+          {task &&
+            (() => {
+              const suggestion = estimateSuggestion(task, store.entities);
+              return suggestion && suggestion !== data.duration ? (
+                <div className="form-actions">
+                  <span>
+                    Focus history suggests {suggestion} minutes from comparable
+                    completed tasks.
+                  </span>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => update({ duration: suggestion })}
+                  >
+                    Use estimate
+                  </button>
+                </div>
+              ) : null;
+            })()}
           <Field label="Repeat">
             <Select
               value={data.recurrence.split(':')[0]}
@@ -564,6 +606,11 @@ export function TaskRow({
 }) {
   const store = useStride();
   const project = store.entities.find((e) => e.id === task.data.project);
+  const unmet = task.data.dependencies
+    .map((id) => store.entities.find((e) => e.id === id && e.kind === 'task'))
+    .filter(
+      (item): item is Task => item?.kind === 'task' && !item.data.completedAt,
+    );
   return (
     <div
       className={`task-row ${task.data.completedAt ? 'completed' : ''}`}
@@ -596,6 +643,16 @@ export function TaskRow({
           )}
           {task.data.recurrence !== 'none' && (
             <span>↻ {task.data.recurrence}</span>
+          )}
+          {task.data.plannedStart && !task.data.completedAt && (
+            <span>
+              Planned {new Date(task.data.plannedStart).toLocaleString()}
+            </span>
+          )}
+          {!!unmet.length && (
+            <span className="overdue">
+              Blocked by {unmet.map((item) => item.data.title).join(', ')}
+            </span>
           )}
           {task.data.tags.map((tag) => (
             <span className="tag" key={tag}>
@@ -1132,6 +1189,7 @@ export function ProjectEditor({
   );
   const [color, setColor] = useState(project?.data.color || '#6179d9');
   const [background, setBackground] = useState(project?.data.background || '');
+  const [deadline, setDeadline] = useState(project?.data.deadline || '');
   return (
     <Modal
       title={project ? 'Project settings' : 'New project'}
@@ -1145,6 +1203,8 @@ export function ProjectEditor({
             title,
             color,
             background,
+            deadline,
+            startedAt: project?.data.startedAt || new Date().toISOString(),
             sections: sections
               .split('\n')
               .map((s) => s.trim())
@@ -1180,6 +1240,13 @@ export function ProjectEditor({
             type="color"
             value={background || '#ffffff'}
             onChange={(e) => setBackground(e.target.value)}
+          />
+        </Field>
+        <Field label="Project deadline (optional)">
+          <input
+            type="date"
+            value={deadline}
+            onChange={(e) => setDeadline(e.target.value)}
           />
         </Field>
         <div className="form-actions">

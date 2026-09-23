@@ -120,6 +120,7 @@ export function validateEntity(e: EntityCandidate) {
       throw new ValidationError('Invalid time');
     if (d.time && !d.due)
       throw new ValidationError('Choose a date for the task time.');
+    optional(d, 'plannedStart', (v) => v === '' || instant(v));
     if (!validZone(stringValue(d.timezone)))
       throw new ValidationError('Choose a valid timezone');
     if (![1, 2, 3, 4].includes(Number(d.priority)))
@@ -256,6 +257,7 @@ const properties = [
 const navigation = [
   'inbox',
   'today',
+  'weekly-review',
   'upcoming',
   'tasks',
   'calendar',
@@ -351,6 +353,8 @@ function validateShape(e: EntityCandidate) {
       break;
     }
     case 'assignment':
+      optional(d, 'plannedStart', (v) => v === '' || instant(v));
+      optional(d, 'duration', (v) => finite(v, 1, 10080));
       if (
         typeof d.title !== 'string' ||
         !d.title.trim() ||
@@ -451,6 +455,8 @@ function validateShape(e: EntityCandidate) {
         invalid('Invalid streak day');
       break;
     case 'project':
+      optional(d, 'deadline', (v) => v === '' || validDate(String(v)));
+      optional(d, 'startedAt', instant);
       optional(d, 'sections', strings);
       optional(d, 'color', hexColor);
       optional(d, 'background', (v) => v === '' || hexColor(v));
@@ -663,6 +669,46 @@ function validateShape(e: EntityCandidate) {
         invalid('Invalid attachment removal marker');
       break;
     case 'settings':
+      optional(d, 'plannerSetup', (v) => typeof v === 'boolean');
+      optional(
+        d,
+        'workingDays',
+        (v) =>
+          Array.isArray(v) &&
+          v.length <= 7 &&
+          new Set(v).size === v.length &&
+          v.every((day) => Number.isInteger(day) && day >= 0 && day <= 6),
+      );
+      for (const key of ['workStart', 'workEnd'])
+        optional(d, key, (v) => typeof v === 'string' && time.test(v));
+      if (
+        typeof d.workStart === 'string' &&
+        typeof d.workEnd === 'string' &&
+        d.workStart >= d.workEnd
+      )
+        invalid('Working hours must end after they start');
+      for (const key of ['geminiPlanning', 'weatherEnabled'])
+        optional(d, key, (v) => typeof v === 'boolean');
+      optional(d, 'weatherLocation', (v) => v === 'gps' || v === 'ip');
+      optional(
+        d,
+        'dashboardCards',
+        (v) =>
+          strings(v) &&
+          new Set(v).size === v.length &&
+          v.every((card) =>
+            [
+              'plan',
+              'next',
+              'tasks',
+              'habits',
+              'focus',
+              'countdowns',
+              'progress',
+              'weather',
+            ].includes(card),
+          ),
+      );
       optional(d, 'educationLevel', (v) =>
         ['gradeSchool', 'highSchool', 'university', 'custom'].includes(
           String(v),

@@ -37,9 +37,11 @@ import { Field, Select, ReorderButtons } from '../forms';
 import { Modal } from '../primitives';
 import { currentRelease, useUpdates } from '@/lib/stride/updates';
 import releases from '@/releases.json';
+import { listGeminiModels, type GeminiModel } from '@/lib/stride/ai';
 const navigation = [
   'inbox',
   'today',
+  'weekly-review',
   'upcoming',
   'tasks',
   'calendar',
@@ -98,6 +100,33 @@ export default function Settings() {
       ? ''
       : localStorage.getItem('stride-gemini-key') || '',
   );
+  const [models, setModels] = useState<GeminiModel[]>([]);
+  const [modelMessage, setModelMessage] = useState('');
+  const [loadingModels, setLoadingModels] = useState(false);
+  const refreshModels = async () => {
+    setLoadingModels(true);
+    setModelMessage('');
+    try {
+      const available = await listGeminiModels(aiKey);
+      setModels(available);
+      if (!available.some((item) => item.id === model)) {
+        setModel(
+          available.find((item) => item.id.includes('flash'))?.id ||
+            available[0]?.id ||
+            '',
+        );
+        setModelMessage(
+          available.length
+            ? 'Your saved model is unavailable to this key. Choose a model and save.'
+            : 'No generateContent models are available to this key.',
+        );
+      }
+    } catch (error) {
+      setModelMessage(String(error));
+    } finally {
+      setLoadingModels(false);
+    }
+  };
   const [backupCode, setBackupCode] = useState('');
   const [restoreCode, setRestoreCode] = useState('');
   const [staged, setStaged] = useState<StagedBackup | null>(null);
@@ -269,6 +298,7 @@ export default function Settings() {
           {[
             ['appearance', 'Appearance', Palette],
             ['navigation', 'Navigation', SettingsIcon],
+            ['planning', 'Planning & dashboard', SettingsIcon],
             ['account', 'Account & sync', Cloud],
             ['notifications', 'Notifications', Bell],
             ['school', 'School & habits', SettingsIcon],
@@ -287,6 +317,8 @@ export default function Settings() {
                 onClick={() => {
                   setTab(stringValue(id));
                   setMessage('');
+                  if (id === 'ai' && aiKey && !models.length)
+                    void refreshModels();
                 }}
               >
                 <I size={17} />
@@ -296,6 +328,157 @@ export default function Settings() {
           })}
         </nav>
         <section className="settings-content">
+          {tab === 'planning' && (
+            <>
+              <h2>Planning & dashboard</h2>
+              <p className="muted">
+                Working hours guide the local planner. Changes to the day plan
+                always show a preview.
+              </p>
+              <div className="planner-days">
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(
+                  (day, index) => (
+                    <label className="checkline" key={day}>
+                      <input
+                        type="checkbox"
+                        checked={store.settings.workingDays.includes(index)}
+                        onChange={(event) =>
+                          setting(
+                            'workingDays',
+                            event.target.checked
+                              ? [...store.settings.workingDays, index].sort(
+                                  (a, b) => a - b,
+                                )
+                              : store.settings.workingDays.filter(
+                                  (value) => value !== index,
+                                ),
+                          )
+                        }
+                      />
+                      {day}
+                    </label>
+                  ),
+                )}
+              </div>
+              <div className="form-grid">
+                <Field label="Work starts">
+                  <input
+                    type="time"
+                    value={store.settings.workStart}
+                    onChange={(event) => {
+                      if (event.target.value < store.settings.workEnd)
+                        setting('workStart', event.target.value);
+                    }}
+                  />
+                </Field>
+                <Field label="Work ends">
+                  <input
+                    type="time"
+                    value={store.settings.workEnd}
+                    onChange={(event) => {
+                      if (event.target.value > store.settings.workStart)
+                        setting('workEnd', event.target.value);
+                    }}
+                  />
+                </Field>
+              </div>
+              <label className="checkline">
+                <input
+                  type="checkbox"
+                  checked={store.settings.geminiPlanning}
+                  onChange={(event) =>
+                    setting('geminiPlanning', event.target.checked)
+                  }
+                />
+                Offer Gemini planning proposals on request
+              </label>
+              <label className="checkline">
+                <input
+                  type="checkbox"
+                  checked={store.settings.weatherEnabled}
+                  onChange={(event) =>
+                    setting('weatherEnabled', event.target.checked)
+                  }
+                />
+                Show weather
+              </label>
+              {store.settings.weatherEnabled && (
+                <Field label="Weather location">
+                  <select
+                    value={store.settings.weatherLocation}
+                    onChange={(event) =>
+                      setting('weatherLocation', event.target.value)
+                    }
+                  >
+                    <option value="ip">Approximate IP location</option>
+                    <option value="gps">
+                      GPS (asks permission when card loads)
+                    </option>
+                  </select>
+                </Field>
+              )}
+              <h3>Today cards</h3>
+              <p className="muted">Choose visible cards and their order.</p>
+              {Object.entries({
+                plan: 'Day plan',
+                next: 'Next task',
+                tasks: 'Tasks',
+                habits: 'Habits',
+                focus: 'Focus goal',
+                countdowns: 'Countdowns',
+                progress: 'Progress',
+                weather: 'Weather',
+              }).map(([card, label]) => {
+                const cards = store.settings.dashboardCards;
+                const index = cards.indexOf(card);
+                return (
+                  <div className="nav-setting" key={card}>
+                    <label className="checkline">
+                      <input
+                        type="checkbox"
+                        checked={index >= 0}
+                        onChange={(event) =>
+                          setting(
+                            'dashboardCards',
+                            event.target.checked
+                              ? [...cards, card]
+                              : cards.filter((value) => value !== card),
+                          )
+                        }
+                      />
+                      {label}
+                    </label>
+                    <ReorderButtons
+                      up={
+                        index > 0
+                          ? () => {
+                              const next = [...cards];
+                              [next[index - 1], next[index]] = [
+                                next[index],
+                                next[index - 1],
+                              ];
+                              setting('dashboardCards', next);
+                            }
+                          : undefined
+                      }
+                      down={
+                        index >= 0 && index < cards.length - 1
+                          ? () => {
+                              const next = [...cards];
+                              [next[index + 1], next[index]] = [
+                                next[index],
+                                next[index + 1],
+                              ];
+                              setting('dashboardCards', next);
+                            }
+                          : undefined
+                      }
+                    />
+                  </div>
+                );
+              })}
+            </>
+          )}
           {tab === 'about' && (
             <>
               <h2>About & Updates</h2>
@@ -1223,22 +1406,30 @@ export default function Settings() {
                   placeholder="Paste your own key"
                 />
               </Field>
-              <Field label="Model">
-                <input
-                  list="gemini-models"
+              <Field label="Model available to your key">
+                <select
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
-                  placeholder="Gemini model ID"
-                />
+                  disabled={!models.length}
+                >
+                  {!models.length && (
+                    <option value={model}>Refresh models to select</option>
+                  )}
+                  {models.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name} ({item.id})
+                    </option>
+                  ))}
+                </select>
               </Field>
-              <datalist id="gemini-models" aria-label="Suggested Gemini models">
-                <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-                <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-              </datalist>
-              <p className="muted">
-                Enter any generateContent model available to your key. Model
-                availability and quotas come from Google.
-              </p>
+              <button
+                className="secondary-button"
+                onClick={() => void refreshModels()}
+                disabled={loadingModels || !aiKey}
+              >
+                {loadingModels ? 'Loading models…' : 'Refresh model list'}
+              </button>
+              {modelMessage && <output>{modelMessage}</output>}
               <div className="form-actions">
                 <button
                   className="secondary-button"
@@ -1254,8 +1445,10 @@ export default function Settings() {
                   className="primary-button"
                   onClick={() =>
                     void action(async () => {
-                      if (!/^[a-zA-Z0-9._-]{1,100}$/.test(model))
-                        throw new Error('Enter a valid model ID');
+                      if (!models.some((item) => item.id === model))
+                        throw new Error(
+                          'Refresh models and select one available to your key.',
+                        );
                       if (aiKey)
                         localStorage.setItem('stride-gemini-key', aiKey);
                       else localStorage.removeItem('stride-gemini-key');

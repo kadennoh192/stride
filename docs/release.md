@@ -1,6 +1,12 @@
 # Release acceptance
 
-Status: **0.2.0 web release deployed; guided device acceptance remains active**. The web/PWA, cloud storage, reminder scheduler, School, streak, wellness, alarm, Insights, and update changes are live at the owner-private production Site. Physical iPhone/Watch, installed-PWA, push-provider, and assistive-technology acceptance are still outstanding.
+## 0.3.0 release (2026-09-23)
+
+The 0.3.0 source adds optional planned starts separate from due dates, a local 14-day scheduler, capacity and blocked-work explanations, previewed one-edit rescheduling, configurable Today cards, a guided weekly review, project health, focus-based estimate suggestions, optional Open-Meteo weather, and Gemini model discovery through `models.list`. Working hours and dashboard preferences use the existing settings record; the API key and weather cache remain device-local. The planner uses existing optional entity fields, so no IndexedDB schema migration is required. Live Gemini requests require a user-supplied key and have not been exercised in the local automated suite.
+
+The source passed TypeScript, lint, all 86 tests with the Miniflare integration run outside the restricted sandbox, and the production build. Desktop and 390×844 browser checks covered setup, Today, the plan preview, Weekly Review, Calendar, planning settings, and browser logs. A dark-theme card contrast issue found on mobile was corrected. Site publication is tracked in the Sites deployment history. Real Gemini-key testing and physical-device acceptance remain outstanding.
+
+Status: **Guided device acceptance remains active**. The web/PWA, cloud storage, reminder scheduler, School, streak, wellness, alarm, Insights, and update changes have been deployed to the production Site. Physical iPhone/Watch, installed-PWA, push-provider, and assistive-technology acceptance are still outstanding.
 
 ## Current evidence
 

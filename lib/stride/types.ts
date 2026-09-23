@@ -111,6 +111,7 @@ export type Task = BaseEntity<
     section: string;
     due: string;
     time: string;
+    plannedStart?: string;
     priority: number;
     tags: string[];
     status: string;
@@ -135,6 +136,8 @@ export type Project = BaseEntity<
     color: string;
     sections: string[];
     background: string;
+    deadline?: string;
+    startedAt?: string;
     [key: string]: unknown;
   }
 >;
@@ -374,6 +377,8 @@ export type Assignment = BaseEntity<
     status: 'To do' | 'In progress' | 'Done';
     due: string;
     time: string;
+    plannedStart?: string;
+    duration?: number;
     timezone: string;
     attachments: { id: string; name: string }[];
     category: string;
@@ -496,6 +501,14 @@ export interface Settings {
   cycles: number;
   dailyGoal: number;
   model: string;
+  plannerSetup: boolean;
+  workingDays: number[];
+  workStart: string;
+  workEnd: string;
+  geminiPlanning: boolean;
+  weatherEnabled: boolean;
+  weatherLocation: 'gps' | 'ip';
+  dashboardCards: string[];
   quietStart: string;
   quietEnd: string;
   taskViews: Record<string, string>;
@@ -544,6 +557,23 @@ export const defaults: Settings = {
   cycles: 4,
   dailyGoal: 5,
   model: 'gemini-2.5-flash',
+  plannerSetup: false,
+  workingDays: [1, 2, 3, 4, 5],
+  workStart: '09:00',
+  workEnd: '17:00',
+  geminiPlanning: false,
+  weatherEnabled: false,
+  weatherLocation: 'ip',
+  dashboardCards: [
+    'plan',
+    'next',
+    'tasks',
+    'habits',
+    'focus',
+    'countdowns',
+    'progress',
+    'weather',
+  ],
   quietStart: '22:00',
   quietEnd: '07:00',
   taskViews: {},
@@ -595,6 +625,7 @@ export function taskData(title: string, extra: Data = {}): Task['data'] {
     section: '',
     due: '',
     time: '',
+    plannedStart: '',
     priority: 4,
     tags: [],
     status: 'To do',

@@ -50,10 +50,12 @@ import { Loading } from './forms';
 import { NetworkClock } from './network-clock';
 import { AlarmOverlay } from './features/alarms';
 import { CheckInReminder } from './features/wellness';
+import { DayDashboard, PlannerSetup, WeeklyReview } from './features/dashboard';
 import { UpdateProvider } from '@/lib/stride/updates';
 const icons = {
   inbox: Inbox,
   today: Sun,
+  'weekly-review': CalendarRange,
   upcoming: CalendarRange,
   tasks: CheckCheck,
   calendar: CalendarDays,
@@ -77,6 +79,7 @@ const icons = {
 const names: Record<string, string> = {
   inbox: 'Inbox',
   today: 'Today',
+  'weekly-review': 'Weekly Review',
   upcoming: 'Upcoming',
   tasks: 'All tasks',
   calendar: 'Calendar',
@@ -136,6 +139,7 @@ const Activity = lazy(() =>
 const enabled = [
   'inbox',
   'today',
+  'weekly-review',
   'upcoming',
   'tasks',
   'calendar',
@@ -577,7 +581,11 @@ function Workspace() {
             <Loading />
           ) : (
             <Suspense fallback={<Loading />}>
-              {route === 'calendar' ? (
+              {route === 'today' ? (
+                <DayDashboard onEdit={setTaskEditor} onAdd={add} />
+              ) : route === 'weekly-review' ? (
+                <WeeklyReview onEdit={setTaskEditor} />
+              ) : route === 'calendar' ? (
                 <Calendar onEdit={setTaskEditor} onAdd={() => add()} />
               ) : route === 'settings' ? (
                 <SettingsPage />
@@ -626,6 +634,7 @@ function Workspace() {
             </Suspense>
           )}
         </div>
+        {store.ready && <PlannerSetup />}
         <nav className="bottom-nav" aria-label="Quick navigation">
           {[
             ['today', Sun],

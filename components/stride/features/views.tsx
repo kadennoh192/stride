@@ -100,6 +100,41 @@ export function CalendarView({
         ]);
     return map;
   }, [assignments, showCompleted]);
+  const plannedByDate = useMemo(() => {
+    const map = new Map<string, (Task | Assignment)[]>();
+    for (const item of [
+      ...visible,
+      ...assignments.filter(
+        (assignment) => showCompleted || assignment.data.status !== 'Done',
+      ),
+    ]) {
+      if (!item.data.plannedStart) continue;
+      const date = dateKey(
+        new Date(item.data.plannedStart),
+        store.settings.timezone || undefined,
+      );
+      map.set(date, [...(map.get(date) || []), item]);
+    }
+    return map;
+  }, [visible, assignments, showCompleted, store.settings.timezone]);
+  const plannedEvent = (item: Task | Assignment) => (
+    <button
+      className="calendar-task planned-event"
+      key={`planned-${item.id}`}
+      onClick={() =>
+        item.kind === 'task'
+          ? onEdit(item)
+          : location.assign(`#assignment/${item.id}`)
+      }
+    >
+      ◷{' '}
+      {new Date(item.data.plannedStart!).toLocaleTimeString([], {
+        hour: 'numeric',
+        minute: '2-digit',
+      })}{' '}
+      {item.data.title} · planned
+    </button>
+  );
   const assignmentEvent = (assignment: Assignment) => (
     <button
       key={assignment.id}
@@ -274,7 +309,7 @@ export function CalendarView({
                     return (
                       <span
                         key={d}
-                        className={`${d.slice(0, 7) !== first.slice(0, 7) ? 'muted' : ''} ${byDate.has(d) || assignmentByDate.has(d) ? 'has-tasks' : ''} ${d === dateKey() ? 'today-cell' : ''}`}
+                        className={`${d.slice(0, 7) !== first.slice(0, 7) ? 'muted' : ''} ${byDate.has(d) || assignmentByDate.has(d) || plannedByDate.has(d) ? 'has-tasks' : ''} ${d === dateKey() ? 'today-cell' : ''}`}
                       >
                         {Number(d.slice(-2))}
                       </span>
@@ -322,6 +357,7 @@ export function CalendarView({
                 {(assignmentByDate.get(d) || [])
                   .slice(0, 5)
                   .map(assignmentEvent)}
+                {(plannedByDate.get(d) || []).slice(0, 5).map(plannedEvent)}
                 {(byDate.get(d)?.length || 0) > 5 && (
                   <button
                     className="subtle-button"
@@ -365,6 +401,7 @@ export function CalendarView({
                     .filter((item) => !item.data.time)
                     .map(assignmentEvent)}
                 </div>
+                {(plannedByDate.get(d) || []).map(plannedEvent)}
                 {Array.from({ length: 24 }, (_, hour) => (
                   <div className="hour-slot" key={hour}>
                     <span>{stringValue(hour).padStart(2, '0')}:00</span>
@@ -545,13 +582,14 @@ export function CalendarView({
           {(active === 'today'
             ? [anchor]
             : [
-                ...new Set(
-                  [...visible, ...assignments]
+                ...new Set([
+                  ...[...visible, ...assignments]
                     .filter(
                       (t) => active !== 'upcoming' || t.data.due >= anchor,
                     )
                     .map((t) => t.data.due),
-                ),
+                  ...plannedByDate.keys(),
+                ]),
               ].sort()
           ).map((d) => (
             <section key={d}>
@@ -571,6 +609,7 @@ export function CalendarView({
                   </div>
                 ))}
               {(assignmentByDate.get(d) || []).map(assignmentEvent)}
+              {(plannedByDate.get(d) || []).map(plannedEvent)}
             </section>
           ))}
           {visible.length === 0 && assignments.length === 0 && (

@@ -55,6 +55,7 @@ export async function completionEdits(task: Task, completed = new Date()) {
         kind: 'task',
         data: next
           ? {
+              plannedStart: '',
               due: next,
               recurrenceAnchor: task.data.recurrenceAnchor || task.data.due,
               time: task.data.time,
@@ -70,7 +71,7 @@ export async function completionEdits(task: Task, completed = new Date()) {
                 done: false,
               })),
             }
-          : { completedAt: at, status: 'Done' },
+          : { completedAt: at, status: 'Done', plannedStart: '' },
       },
     ] satisfies EntityEdit[],
   };
