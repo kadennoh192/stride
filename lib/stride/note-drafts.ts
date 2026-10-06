@@ -17,7 +17,10 @@ export interface NoteDraft {
 }
 // Separate slots preserve competing edits from independent tabs, including a
 // tab which closes while another tab is still editing the same note.
-const session = crypto.randomUUID();
+// This module also loads during server rendering. Workers prohibit random
+// generation while importing modules, so create the tab identity on first use.
+let session: string | undefined;
+const sessionId = () => (session ??= crypto.randomUUID());
 const memory = new Map<string, NoteDraft>();
 const committed = new Map<string, { draft: NoteDraft; at: string }>();
 const writes = new Map<string, Promise<void>>();
@@ -61,7 +64,7 @@ export async function readNoteDraft(owner: string, id: string) {
   if (memory.has(key)) return memory.get(key);
   const draft = (await recoverableNoteDrafts(owner, id))[0];
   if (draft) {
-    memory.set(key, { ...draft, slot: `${key}:${session}` });
+    memory.set(key, { ...draft, slot: `${key}:${sessionId()}` });
     changed();
   }
   return memory.get(key);
@@ -101,7 +104,7 @@ export function stageNoteDraft(
     ),
     revision: (previous?.revision || 0) + 1,
     savedAt: Date.now(),
-    slot: `${key}:${session}`,
+    slot: `${key}:${sessionId()}`,
   };
   memory.set(key, draft);
   changed();

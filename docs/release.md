@@ -12,17 +12,21 @@ The full suite covers schema 1–8 upgrades, deletion of all legacy stores and r
 
 Notes coverage includes document formatting, tables, checklists, durable attachment IDs, folder ancestry cycles, folder deletion and Undo, pin/edit ordering, title fallback, body search, timestamps, quota failure retry, rapid staging and flush, competing tab drafts, remote edits, deleted-note recovery, pending attachment storage, offline file availability and download errors. Layout tests cover defaults, overrides and returning to default. Existing recurrence, dependencies, timezone/DST, reminders, alarms, habit/streak, School, planning and update tests remain intact.
 
-Typecheck, lint, all 83 tests, the production build and Drizzle migration consistency check pass. Explicit stale file/upload/push/alarm requests return 426, and repeated initialization preserves new D1 fields and R2 files. Code and isolated tests alone are not proof of production deletion.
+Typecheck, lint, all 84 tests, the production build and Drizzle migration consistency check pass. Explicit stale file/upload/push/alarm requests return 426, and repeated initialization preserves new D1 fields and R2 files. Code and isolated tests alone are not proof of production deletion.
 
 ## Browser acceptance
 
 Local browser checks cover the empty setup and task-layout choice, desktop and mobile Notes panes, saved title/body edits, formatting, tables/checklists, long text, images/files, menus, light/dark themes, settings and task layouts. Keyboard activation and right-click target the correct note/task; folder movement and Board/Table/Timeline default/override changes work without reload. Screenshots use local fixtures. Physical mobile devices and assistive technologies remain outside this browser acceptance.
 
-## Intended deployment and reset
+## Production deployment and reset
 
-The intended environment is the existing owner-private Stride Site at `https://stride-workspace.mooeykadancow.chatgpt.site`. Keep its audience and infrastructure configuration. A successful deployment does not itself initialize or verify the owner's reset. The already signed-in owner must reach the updated application; its authenticated initializer verifies empty owner D1 records and R2 prefixes before recording completion.
+The existing owner-private Site now publishes at `https://stride-workspace.kadennoh192.chatgpt.site`. Its audience and infrastructure configuration are preserved. The previous `mooeykadancow` origin returns 404; browser storage and cookies are origin-scoped, so local copies on that retired origin could not be inspected or erased from the current origin.
 
-Production reset verification is pending. Do not interpret test fixture cleanup as deletion of this workspace.
+The existing Supabase account project was paused. It was restored without changing accounts, passwords, authentication configuration or secrets. The owner's existing credentials successfully signed in. At 2026-10-06T12:05:40.942Z, the authenticated initializer recorded generation `stride-notes-2026-10-05` as complete. Live D1 reads then verified zero fields, changes, dedup rows, push subscriptions, reminder jobs/deliveries/scheduling intent and Watch tokens. The completion path verifies zero owner rows and empty owner durable and staged-upload R2 prefixes before writing the marker. Global dispatcher replay nonces have no owner/workspace payload and remain infrastructure protection.
+
+Fresh setup appeared after sign-in. The local schema upgrade and isolated tests prove clearing of legacy browser stores on an updated launch; inaccessible retired-origin storage, downloaded backups and disconnected devices remain outside actual deletion verification.
+
+A production-response check found a Worker module-load failure from an eager random draft-session ID. Draft identities are now lazy, and an isolated import test rejects any random generation during server module loading. The final release is checked with the built Worker for a successful HTML response before publication.
 
 ## Remaining device acceptance
 
