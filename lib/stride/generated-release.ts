@@ -1,6 +1,6 @@
 export const currentRelease = {
   version: '0.4.0',
-  build: 'cb4e8f8e44dc9d69',
+  build: '5619a614dd8bd7a3',
   date: '2026-10-05',
   summary:
     'A calmer workspace, continuous Notes, shared quick actions, and a permanent one-time workspace reset.',
