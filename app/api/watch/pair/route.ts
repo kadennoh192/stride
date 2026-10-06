@@ -1,3 +1,4 @@
+import { resetBoundary, workspaceReady } from '@/lib/server/reset';
 import { authorize } from '@/lib/server/auth';
 import { db, sameOrigin } from '@/lib/server/bindings';
 import { pairingCode, randomToken, sha256 } from '@/lib/server/watch';
@@ -25,6 +26,8 @@ export async function POST(request: Request) {
           { error: 'Sign in before creating a Watch Link.' },
           { status: 401, headers: noStore },
         );
+      const boundary = await resetBoundary(request, user.id);
+      if (boundary) return boundary;
       const token = randomToken();
       const now = new Date();
       const expires = new Date(now);
@@ -55,6 +58,8 @@ export async function POST(request: Request) {
           { error: 'Sign in before pairing Apple Watch.' },
           { status: 401, headers: noStore },
         );
+      const boundary = await resetBoundary(request, user.id);
+      if (boundary) return boundary;
       const code = pairingCode();
       const now = new Date();
       const expires = new Date(now.getTime() + 10 * 60_000);
@@ -62,9 +67,9 @@ export async function POST(request: Request) {
       await database.batch([
         database
           .prepare(
-            "DELETE FROM watch_tokens WHERE expires<=? OR (owner=? AND token_hash LIKE 'pair:%')",
+            "DELETE FROM watch_tokens WHERE owner=? AND (expires<=? OR token_hash LIKE 'pair:%')",
           )
-          .bind(now.toISOString(), user.id),
+          .bind(user.id, now.toISOString()),
         database
           .prepare(
             'INSERT INTO watch_tokens (token_hash,owner,created,expires) VALUES (?,?,?,?)',
@@ -88,6 +93,8 @@ export async function POST(request: Request) {
       if (user instanceof Response) return user;
       if (!user)
         return Response.json({ error: 'Sign in required' }, { status: 401 });
+      const boundary = await resetBoundary(request, user.id);
+      if (boundary) return boundary;
       await db()
         .prepare('DELETE FROM watch_tokens WHERE owner=?')
         .bind(user.id)
@@ -110,7 +117,11 @@ export async function POST(request: Request) {
         )
         .bind(hash)
         .first<{ owner: string; expires: string }>();
-      if (!pair || Date.parse(pair.expires) <= Date.now()) {
+      if (
+        !pair ||
+        Date.parse(pair.expires) <= Date.now() ||
+        !(await workspaceReady(pair.owner))
+      ) {
         return Response.json(
           { error: 'That pairing code is invalid or expired.' },
           { status: 401, headers: noStore },

@@ -1,3 +1,4 @@
+import { resetBoundary } from '@/lib/server/reset';
 import { authorize } from '@/lib/server/auth';
 import { sameOrigin } from '@/lib/server/bindings';
 import { serverEntity } from '@/lib/server/reminders';
@@ -15,6 +16,8 @@ export async function POST(request: Request) {
       { error: 'Sign in to control background alarms' },
       { status: 401 },
     );
+  const boundary = await resetBoundary(request, user.id);
+  if (boundary) return boundary;
   try {
     if (Number(request.headers.get('content-length')) > 2000)
       return Response.json({ error: 'Request too large' }, { status: 413 });

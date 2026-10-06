@@ -22,6 +22,13 @@
       "when": 1788709625280,
       "tag": "0002_fat_impossible_man",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1791244800000,
+      "tag": "0003_workspace_reset",
+      "breakpoints": true
     }
   ]
 }

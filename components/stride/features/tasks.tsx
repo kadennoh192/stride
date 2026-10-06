@@ -24,6 +24,10 @@ import { parseTask } from '@/lib/stride/ai';
 import { estimateSuggestion } from '@/lib/stride/planner';
 import { Modal, Empty } from '../primitives';
 import { Field, Select, CheckList } from '../forms';
+import { resolveTaskLayout, taskLayouts } from '@/lib/stride/notes';
+import type { TaskLayout } from '@/lib/stride/types';
+import { TaskActionSurface } from '../task-actions';
+import { ItemMenu } from '../item-actions';
 import { CalendarView } from './views';
 export const priorityOptions = [
   { value: '1', label: 'P1 · Urgent' },
@@ -612,70 +616,79 @@ export function TaskRow({
       (item): item is Task => item?.kind === 'task' && !item.data.completedAt,
     );
   return (
-    <div
-      className={`task-row ${task.data.completedAt ? 'completed' : ''}`}
-      draggable
-      onDragStart={(e) => e.dataTransfer.setData('text/stride-task', task.id)}
-    >
-      <input
-        type="checkbox"
-        className={`task-check priority-${task.data.priority}`}
-        checked={!!task.data.completedAt}
-        aria-label={`${task.data.completedAt ? 'Reopen' : 'Complete'} ${task.data.title}`}
-        onChange={() => void store.complete(task)}
-      />
-      <div className="task-content">
-        <button className="task-title" onClick={() => onEdit(task)}>
-          {task.data.title}
-        </button>
-        <div className="task-meta">
-          {task.data.due && (
-            <span
-              className={
-                task.data.due < dateKey() && !task.data.completedAt
-                  ? 'overdue'
-                  : ''
-              }
-            >
-              <CalendarDays size={12} />
-              {task.data.due} {task.data.time}
-            </span>
-          )}
-          {task.data.recurrence !== 'none' && (
-            <span>↻ {task.data.recurrence}</span>
-          )}
-          {task.data.plannedStart && !task.data.completedAt && (
-            <span>
-              Planned {new Date(task.data.plannedStart).toLocaleString()}
-            </span>
-          )}
-          {!!unmet.length && (
-            <span className="overdue">
-              Blocked by {unmet.map((item) => item.data.title).join(', ')}
-            </span>
-          )}
-          {task.data.tags.map((tag) => (
-            <span className="tag" key={tag}>
-              #{tag}
-            </span>
-          ))}
-          {task.data.dependencies.length > 0 && (
-            <span>
-              <Link2 size={12} />
-              {task.data.dependencies.length}
-            </span>
-          )}
-          {task.data.parent && <span>Subtask</span>}
+    <TaskActionSurface task={task} onEdit={onEdit}>
+      {(menu) => (
+        <div
+          className={`task-row ${task.data.completedAt ? 'completed' : ''}`}
+          draggable
+          onDragStart={(e) =>
+            e.dataTransfer.setData('text/stride-task', task.id)
+          }
+        >
+          <input
+            type="checkbox"
+            className={`task-check priority-${task.data.priority}`}
+            checked={!!task.data.completedAt}
+            aria-label={`${task.data.completedAt ? 'Reopen' : 'Complete'} ${task.data.title}`}
+            onChange={() => void store.complete(task)}
+          />
+          <div className="task-content">
+            <button className="task-title" onClick={() => onEdit(task)}>
+              {task.data.title}
+            </button>
+            <div className="task-meta">
+              {task.data.due && (
+                <span
+                  className={
+                    task.data.due < dateKey() && !task.data.completedAt
+                      ? 'overdue'
+                      : ''
+                  }
+                >
+                  <CalendarDays size={12} />
+                  {task.data.due} {task.data.time}
+                </span>
+              )}
+              {task.data.recurrence !== 'none' && (
+                <span>↻ {task.data.recurrence}</span>
+              )}
+              {task.data.plannedStart && !task.data.completedAt && (
+                <span>
+                  Planned {new Date(task.data.plannedStart).toLocaleString()}
+                </span>
+              )}
+              {!!unmet.length && (
+                <span className="overdue">
+                  Blocked by {unmet.map((item) => item.data.title).join(', ')}
+                </span>
+              )}
+              {task.data.tags.map((tag) => (
+                <span className="tag" key={tag}>
+                  #{tag}
+                </span>
+              ))}
+              {task.data.dependencies.length > 0 && (
+                <span>
+                  <Link2 size={12} />
+                  {task.data.dependencies.length}
+                </span>
+              )}
+              {task.data.parent && <span>Subtask</span>}
+            </div>
+          </div>
+          <span className="task-project">
+            {stringValue(project?.data.title || 'Inbox')}
+            <i
+              className="project-dot"
+              style={{
+                background: stringValue(project?.data.color || '#9198b0'),
+              }}
+            />
+          </span>
+          {menu}
         </div>
-      </div>
-      <span className="task-project">
-        {stringValue(project?.data.title || 'Inbox')}
-        <i
-          className="project-dot"
-          style={{ background: stringValue(project?.data.color || '#9198b0') }}
-        />
-      </span>
-    </div>
+      )}
+    </TaskActionSurface>
   );
 }
 export function Tasks({
@@ -689,7 +702,8 @@ export function Tasks({
 }) {
   const store = useStride();
   const [query, setQuery] = useState('');
-  const [view, setView] = useState(store.settings.taskViews[route] || 'list');
+  const view = resolveTaskLayout(store.settings, route);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [priority, setPriority] = useState('');
   const [tag, setTag] = useState('');
   const [projectFilter, setProjectFilter] = useState('');
@@ -706,9 +720,6 @@ export function Tasks({
   const project = store.entities.find(
     (e) => e.id === route.split('/')[1] && e.kind === 'project',
   ) as Project | undefined;
-  const saved = store.entities.find(
-    (e) => e.id === route.split('/')[1] && e.kind === 'view',
-  );
   const base = useMemo(
     () =>
       tasks.filter((t) => {
@@ -729,28 +740,25 @@ export function Tasks({
         priority,
         tag,
         project: projectFilter,
-        ...(saved?.data.filter as Record<string, string>),
       }).sort(
         (a, b) =>
           a.data.due.localeCompare(b.data.due) ||
           a.data.priority - b.data.priority,
       ),
-    [base, query, priority, tag, projectFilter, saved],
+    [base, query, priority, tag, projectFilter],
   );
   const title =
     project?.data.title ||
-    (saved
-      ? stringValue(saved.data.title)
-      : (
-          {
-            today: 'Today',
-            inbox: 'Inbox',
-            upcoming: 'Upcoming',
-            tasks: 'All tasks',
-            archive: 'Completed tasks',
-            filters: 'Filters & labels',
-          } as Record<string, string>
-        )[route] || 'Tasks');
+    (
+      {
+        today: 'Today',
+        inbox: 'Inbox',
+        upcoming: 'Upcoming',
+        tasks: 'All tasks',
+        archive: 'Completed tasks',
+      } as Record<string, string>
+    )[route] ||
+    'Tasks';
   const completedToday = store.entities.filter(
     (e) =>
       e.kind === 'completion' &&
@@ -856,99 +864,110 @@ export function Tasks({
               Opening remaining tasks from this device…
             </output>
           )}
-          <div className="viewbar">
-            {['list', 'board', 'table', 'timeline'].map((v) => (
-              <button
-                className={`view-tab ${view === v ? 'active' : ''}`}
-                key={v}
-                onClick={() => {
-                  setView(v);
-                  void store.setSettings({
-                    taskViews: { ...store.settings.taskViews, [route]: v },
-                  });
-                }}
-              >
-                {v[0].toUpperCase() + v.slice(1)}
-              </button>
-            ))}
-            {project && (
-              <button
-                className="icon-button"
-                onClick={() =>
-                  (location.hash = `project-settings/${project.id}`)
-                }
-                aria-label="Project settings"
-              >
-                ⚙
-              </button>
-            )}
+          <div className="task-screen-toolbar">
+            <button
+              className="secondary-button"
+              aria-expanded={filtersOpen}
+              onClick={() => setFiltersOpen(!filtersOpen)}
+            >
+              Filter
+              {query || priority || tag || projectFilter ? ' · active' : ''}
+            </button>
+            <ItemMenu
+              label="Task screen"
+              actions={[
+                {
+                  id: 'layout',
+                  label: 'Task layout settings',
+                  run: () => {
+                    location.hash = project
+                      ? `project-settings/${project.id}`
+                      : 'settings/layouts';
+                  },
+                },
+                ...(project
+                  ? [
+                      {
+                        id: 'project',
+                        label: 'Project settings',
+                        run: () => {
+                          location.hash = `project-settings/${project.id}`;
+                        },
+                      },
+                    ]
+                  : []),
+              ]}
+            />
           </div>
-          <div className="filterbar">
-            <div className="search-field">
-              <Search size={16} />
-              <input
-                aria-label="Filter tasks"
-                placeholder="Filter tasks…"
-                value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value);
+          {filtersOpen && (
+            <div className="filterbar">
+              <div className="search-field">
+                <Search size={16} />
+                <input
+                  aria-label="Filter tasks"
+                  placeholder="Filter tasks…"
+                  value={query}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    setPage(0);
+                  }}
+                />
+              </div>
+              <Select
+                label="Priority filter"
+                value={priority}
+                onChange={(v) => {
+                  setPriority(v);
                   setPage(0);
                 }}
+                options={[
+                  { value: '', label: 'All priorities' },
+                  ...priorityOptions,
+                ]}
               />
+              <Select
+                label="Label filter"
+                value={tag}
+                onChange={(value) => {
+                  setTag(value);
+                  setPage(0);
+                }}
+                options={[
+                  { value: '', label: 'All labels' },
+                  ...new Set(tasks.flatMap((t) => t.data.tags)),
+                ]}
+              />
+              <Select
+                label="Project filter"
+                value={projectFilter}
+                onChange={(value) => {
+                  setProjectFilter(value);
+                  setPage(0);
+                }}
+                options={[
+                  { value: '', label: 'All projects' },
+                  ...store.entities
+                    .filter((entity) => entity.kind === 'project')
+                    .map((entity) => ({
+                      value: entity.id,
+                      label: stringValue(entity.data.title),
+                    })),
+                ]}
+              />
+              <button
+                className="subtle-button"
+                onClick={() => {
+                  setQuery('');
+                  setPriority('');
+                  setTag('');
+                  setProjectFilter('');
+                  setPage(0);
+                }}
+              >
+                Clear filters
+              </button>
             </div>
-            <Select
-              label="Priority filter"
-              value={priority}
-              onChange={(v) => {
-                setPriority(v);
-                setPage(0);
-              }}
-              options={[
-                { value: '', label: 'All priorities' },
-                ...priorityOptions,
-              ]}
-            />
-            <Select
-              label="Label filter"
-              value={tag}
-              onChange={setTag}
-              options={[
-                { value: '', label: 'All labels' },
-                ...new Set(tasks.flatMap((t) => t.data.tags)),
-              ]}
-            />
-            {route === 'filters' && (
-              <>
-                <Select
-                  label="Project filter"
-                  value={projectFilter}
-                  onChange={setProjectFilter}
-                  options={[
-                    { value: '', label: 'All projects' },
-                    ...store.entities
-                      .filter((e) => e.kind === 'project')
-                      .map((e) => ({
-                        value: e.id,
-                        label: stringValue(e.data.title),
-                      })),
-                  ]}
-                />
-                <button
-                  className="secondary-button"
-                  onClick={async () => {
-                    const name = `${tag ? `#${tag} ` : ''}${priority ? `P${priority} ` : ''}${query || 'Saved filter'}`;
-                    await store.add('view', {
-                      title: name,
-                      filter: { query, priority, tag, project: projectFilter },
-                    });
-                    store.notice('Filter saved in navigation');
-                  }}
-                >
-                  Save filter
-                </button>
-              </>
-            )}
-          </div>
+          )}
           {route === 'today' && (
             <div className="day-summary">
               <div className="progress-ring">
@@ -1190,6 +1209,9 @@ export function ProjectEditor({
   const [color, setColor] = useState(project?.data.color || '#6179d9');
   const [background, setBackground] = useState(project?.data.background || '');
   const [deadline, setDeadline] = useState(project?.data.deadline || '');
+  const [layout, setLayout] = useState(
+    project ? store.settings.taskViews[`project/${project.id}`] || '' : '',
+  );
   return (
     <Modal
       title={project ? 'Project settings' : 'New project'}
@@ -1210,8 +1232,14 @@ export function ProjectEditor({
               .map((s) => s.trim())
               .filter(Boolean),
           };
+          const projectId = project
+            ? project.id
+            : await store.add('project', data);
           if (project) await store.update(project, data);
-          else await store.add('project', data);
+          const taskViews = { ...store.settings.taskViews };
+          if (layout) taskViews[`project/${projectId}`] = layout as TaskLayout;
+          else delete taskViews[`project/${projectId}`];
+          await store.setSettings({ taskViews });
           onClose();
         }}
       >
@@ -1220,6 +1248,19 @@ export function ProjectEditor({
             required
             value={title}
             onChange={(e) => setTitle(e.target.value)}
+          />
+        </Field>
+        <Field label="Task layout">
+          <Select
+            value={layout}
+            onChange={setLayout}
+            options={[
+              { value: '', label: 'Use default' },
+              ...taskLayouts.map((value) => ({
+                value,
+                label: value[0].toUpperCase() + value.slice(1),
+              })),
+            ]}
           />
         </Field>
         <Field label="Color">

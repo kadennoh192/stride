@@ -11,13 +11,11 @@ import {
   Pause,
   RotateCcw,
   Settings,
-  Trash2,
   ChevronLeft,
   ChevronRight,
   Zap,
   CalendarDays,
   Check,
-  ArrowUpRight,
 } from 'lucide-react';
 import { useStride } from '@/lib/stride/store';
 import { habitLogId } from '@/lib/stride/habits';
@@ -35,10 +33,10 @@ import {
   uid,
   dateKey,
   shiftDate,
-  taskData,
 } from '@/lib/stride/types';
 import { Modal, Empty } from '../primitives';
 import { Field, Select } from '../forms';
+import { CoreItemActionSurface } from '../core-item-actions';
 import { TaskRow } from './tasks';
 function HabitEditor({
   habit,
@@ -372,92 +370,100 @@ export function Habits() {
                 100,
             );
             return (
-              <section className="habit-card" key={h.id}>
-                <div className="habit-card-heading">
-                  <span className="habit-icon" style={{ color: h.data.color }}>
-                    {h.data.icon}
-                  </span>
-                  <div>
-                    <h3>{h.data.title}</h3>
-                    <p className="muted">{percent}% consistency over 28 days</p>
-                  </div>
-                  <button
-                    className="icon-button"
-                    aria-label={`${h.data.title} settings`}
-                    onClick={() => setEditing(h)}
-                  >
-                    <Settings size={16} />
-                  </button>
-                </div>
-                <div className="habit-progress">
-                  <progress max={h.data.goal} value={done} />
-                  <span>
-                    {done} / {h.data.goal} {h.data.unit}
-                  </span>
-                </div>
-                <div className="habit-actions">
-                  <button
-                    className="secondary-button"
-                    disabled={done <= 0}
-                    onClick={() => void setValue(h, date, done - 1)}
-                  >
-                    −
-                  </button>
-                  <input
-                    aria-label={`Progress for ${h.data.title}`}
-                    type="number"
-                    min={0}
-                    step="any"
-                    value={done}
-                    onChange={(e) =>
-                      void setValue(h, date, Number(e.target.value))
-                    }
-                  />
-                  <button
-                    className="primary-button"
-                    onClick={() => void setValue(h, date, done + 1)}
-                  >
-                    <Plus size={16} />
-                    Log
-                  </button>
-                  <button
-                    className="icon-button"
-                    aria-label={`Reach goal for ${h.data.title}`}
-                    onClick={() => void setValue(h, date, h.data.goal)}
-                  >
-                    <Check size={18} />
-                  </button>
-                </div>
-                {!scheduled(h, date) && (
-                  <p className="muted">
-                    Rest day — optional progress still saves.
-                  </p>
+              <CoreItemActionSurface
+                key={h.id}
+                entity={h}
+                day={date}
+                onOpen={() => setEditing(h)}
+              >
+                {(menu) => (
+                  <section className="habit-card">
+                    <div className="habit-card-heading">
+                      <span
+                        className="habit-icon"
+                        style={{ color: h.data.color }}
+                      >
+                        {h.data.icon}
+                      </span>
+                      <div>
+                        <h3>{h.data.title}</h3>
+                        <p className="muted">
+                          {percent}% consistency over 28 days
+                        </p>
+                      </div>
+                      {menu}
+                    </div>
+                    <div className="habit-progress">
+                      <progress max={h.data.goal} value={done} />
+                      <span>
+                        {done} / {h.data.goal} {h.data.unit}
+                      </span>
+                    </div>
+                    <div className="habit-actions">
+                      <button
+                        className="secondary-button"
+                        disabled={done <= 0}
+                        onClick={() => void setValue(h, date, done - 1)}
+                      >
+                        −
+                      </button>
+                      <input
+                        aria-label={`Progress for ${h.data.title}`}
+                        type="number"
+                        min={0}
+                        step="any"
+                        value={done}
+                        onChange={(e) =>
+                          void setValue(h, date, Number(e.target.value))
+                        }
+                      />
+                      <button
+                        className="primary-button"
+                        onClick={() => void setValue(h, date, done + 1)}
+                      >
+                        <Plus size={16} />
+                        Log
+                      </button>
+                      <button
+                        className="icon-button"
+                        aria-label={`Reach goal for ${h.data.title}`}
+                        onClick={() => void setValue(h, date, h.data.goal)}
+                      >
+                        <Check size={18} />
+                      </button>
+                    </div>
+                    {!scheduled(h, date) && (
+                      <p className="muted">
+                        Rest day — optional progress still saves.
+                      </p>
+                    )}
+                    <div className="habit-heatmap">
+                      {days.map((d) => (
+                        <button
+                          key={d}
+                          className={
+                            value(h, d) >= h.data.goal
+                              ? 'done'
+                              : value(h, d) > 0
+                                ? 'partial'
+                                : ''
+                          }
+                          style={
+                            value(h, d) >= h.data.goal
+                              ? { background: h.data.color }
+                              : undefined
+                          }
+                          title={`${d}: ${value(h, d)} / ${h.data.goal}`}
+                          aria-label={`Edit ${h.data.title} on ${d}`}
+                          onClick={() => setDate(d)}
+                        >
+                          {Number(d.slice(-2))}
+                        </button>
+                      ))}
+                    </div>
+                  </section>
                 )}
-                <div className="habit-heatmap">
-                  {days.map((d) => (
-                    <button
-                      key={d}
-                      className={
-                        value(h, d) >= h.data.goal
-                          ? 'done'
-                          : value(h, d) > 0
-                            ? 'partial'
-                            : ''
-                      }
-                      style={
-                        value(h, d) >= h.data.goal
-                          ? { background: h.data.color }
-                          : undefined
-                      }
-                      title={`${d}: ${value(h, d)} / ${h.data.goal}`}
-                      aria-label={`Edit ${h.data.title} on ${d}`}
-                      onClick={() => setDate(d)}
-                    >
-                      {Number(d.slice(-2))}
-                    </button>
-                  ))}
-                </div>
-              </section>
+              </CoreItemActionSurface>
             );
           })}
         </div>
@@ -844,22 +850,20 @@ export function Countdowns() {
         {events.map((e) => {
           const left = new Date(stringValue(e.data.date)).getTime() - now;
           return (
-            <section className="countdown-card" key={e.id}>
-              <CalendarDays size={22} />
-              <h2>{stringValue(e.data.title)}</h2>
-              <strong>{Math.abs(Math.ceil(left / 86400000))}</strong>
-              <span>{left >= 0 ? 'days to go' : 'days ago'}</span>
-              <p className="muted">
-                {new Date(stringValue(e.data.date)).toLocaleString()}
-              </p>
-              <button
-                className="icon-button"
-                aria-label={`Delete ${e.data.title}`}
-                onClick={() => void store.remove(e)}
-              >
-                <Trash2 size={16} />
-              </button>
-            </section>
+            <CoreItemActionSurface key={e.id} entity={e}>
+              {(menu) => (
+                <section className="countdown-card">
+                  <CalendarDays size={22} />
+                  <h2>{stringValue(e.data.title)}</h2>
+                  <strong>{Math.abs(Math.ceil(left / 86400000))}</strong>
+                  <span>{left >= 0 ? 'days to go' : 'days ago'}</span>
+                  <p className="muted">
+                    {new Date(stringValue(e.data.date)).toLocaleString()}
+                  </p>
+                  {menu}
+                </section>
+              )}
+            </CoreItemActionSurface>
           );
         })}
       </div>
@@ -1165,219 +1169,6 @@ export function Insights() {
           occurrence earns 10 XP. Undoing a completion removes its reward.
         </p>
       </section>
-    </>
-  );
-}
-const templates = [
-  {
-    id: 'weekly',
-    title: 'Weekly reset',
-    description: 'Clear your inbox, review priorities, and plan the week.',
-    tasks: [
-      'Review your inbox',
-      'Choose three priorities for the week',
-      'Schedule time for deep work',
-      'Reflect on last week',
-    ],
-  },
-  {
-    id: 'project',
-    title: 'Project launch',
-    description: 'Turn an idea into a clear, achievable project.',
-    tasks: [
-      'Define the outcome',
-      'List milestones and dependencies',
-      'Choose the first action',
-      'Schedule a progress review',
-    ],
-  },
-  {
-    id: 'routine',
-    title: 'A gentler morning',
-    description: 'A short routine to start with intention.',
-    tasks: [
-      'Choose your most important task',
-      'Make room for a mindful pause',
-      'Plan a realistic day',
-    ],
-  },
-];
-const tips = [
-  {
-    title: 'Make the next step smaller',
-    body: 'Write a task you could begin in two minutes. A clear starting point makes a large project easier to approach.',
-  },
-  {
-    title: 'Leave room in your calendar',
-    body: 'Unscheduled time gives you space for surprises, transitions, and rest. A full calendar is not a requirement for a useful day.',
-  },
-  {
-    title: 'Keep a shutdown ritual',
-    body: 'Review what moved forward, capture loose ends, and choose tomorrow’s first step. Then let the workday end.',
-  },
-  {
-    title: 'Review the system, not yourself',
-    body: 'When a routine keeps slipping, adjust its time, size, or context. A useful system should fit your life.',
-  },
-];
-export function Explore() {
-  const store = useStride();
-  const [answer, setAnswer] = useState('');
-  const [energy, setEnergy] = useState('');
-  const [result, setResult] = useState(false);
-  const applyTemplate = async (template: (typeof templates)[number]) => {
-    const project = uid();
-    await store.edit(
-      [
-        {
-          id: project,
-          kind: 'project',
-          data: {
-            title: template.title,
-            color: '#5268e8',
-            sections: ['Next', 'Later'],
-            background: '',
-          },
-        },
-        ...template.tasks.map((title) => ({
-          id: uid(),
-          kind: 'task' as const,
-          data: taskData(title, { project }),
-        })),
-      ],
-      'Applied template',
-    );
-    store.notice(`${template.title} added to your projects`);
-  };
-  return (
-    <>
-      <div className="page-heading">
-        <div>
-          <div className="eyebrow">FIND YOUR OWN RHYTHM</div>
-          <h1>Explore</h1>
-          <p>Ideas and starting points you can make your own.</p>
-        </div>
-      </div>
-      <h2 className="section-title">Template gallery</h2>
-      <div className="page-cards">
-        {templates.map((t) => (
-          <section className="page-card" key={t.id}>
-            <span>↗</span>
-            <h3>{t.title}</h3>
-            <p className="muted">{t.description}</p>
-            <button
-              className="secondary-button"
-              onClick={() => void applyTemplate(t)}
-            >
-              Use template <ArrowUpRight size={15} />
-            </button>
-          </section>
-        ))}
-      </div>
-      <section className="quiz-panel">
-        <h2>Find a setup that fits</h2>
-        <p className="muted">
-          A practical preference quiz, not a personality assessment.
-        </p>
-        <Field label="What most often gets in your way?">
-          <Select
-            value={answer}
-            onChange={(v) => {
-              setAnswer(v);
-              setResult(false);
-            }}
-            options={[
-              { value: '', label: 'Choose an answer' },
-              { value: 'start', label: 'Getting started' },
-              { value: 'organize', label: 'Keeping track of everything' },
-              { value: 'focus', label: 'Staying focused' },
-            ]}
-          />
-        </Field>
-        <Field label="How much focused time feels realistic?">
-          <Select
-            value={energy}
-            onChange={(v) => {
-              setEnergy(v);
-              setResult(false);
-            }}
-            options={[
-              { value: '', label: 'Choose an answer' },
-              { value: '15', label: '15 minutes' },
-              { value: '25', label: '25 minutes' },
-              { value: '45', label: '45 minutes' },
-            ]}
-          />
-        </Field>
-        <button
-          className="primary-button"
-          disabled={!answer || !energy}
-          onClick={() => setResult(true)}
-        >
-          Show my suggestion
-        </button>
-        {result && (
-          <div className="inset-panel">
-            <h3>
-              {answer === 'start'
-                ? 'Begin with one small action'
-                : answer === 'organize'
-                  ? 'Make space for a weekly reset'
-                  : 'Protect one focus interval'}
-            </h3>
-            <p className="muted">
-              {answer === 'start'
-                ? 'A simple project template gives you a concrete first step.'
-                : answer === 'organize'
-                  ? 'A weekly review helps turn a scattered inbox into a manageable plan.'
-                  : 'A timed session creates a clear boundary for one task.'}{' '}
-              Try {energy}-minute focus sessions based on the time you chose.
-            </p>
-            <button
-              className="secondary-button"
-              onClick={async () => {
-                await store.setSettings({ focusMinutes: Number(energy) });
-                if (answer !== 'focus')
-                  await applyTemplate(templates[answer === 'organize' ? 0 : 1]);
-                store.notice('Your suggested setup has been applied');
-              }}
-            >
-              Apply suggestion
-            </button>
-          </div>
-        )}
-      </section>
-      <h2 className="section-title">Inspiration hub</h2>
-      <div className="inspiration-grid">
-        {tips.map((t, i) => {
-          const favorite = store.entities.find(
-            (e) => e.id === `favorite-tip-${i}`,
-          );
-          return (
-            <article className="inspiration-card" key={t.title}>
-              <h3>{t.title}</h3>
-              <p>{t.body}</p>
-              <button
-                className="subtle-button"
-                onClick={() =>
-                  void store.edit(
-                    [
-                      {
-                        id: `favorite-tip-${i}`,
-                        kind: 'favorite',
-                        data: { title: t.title, tip: i, _deleted: !!favorite },
-                      },
-                    ],
-                    'Updated inspiration favorite',
-                  )
-                }
-              >
-                {favorite ? '★ Saved' : '☆ Save inspiration'}
-              </button>
-            </article>
-          );
-        })}
-      </div>
     </>
   );
 }

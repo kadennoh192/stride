@@ -1,4 +1,9 @@
 'use client';
+import { normalizeRoute } from '@/lib/stride/routes';
+import {
+  flushAllNoteDrafts,
+  hasUnsavedNoteDrafts,
+} from '@/lib/stride/note-drafts';
 import { stringValue } from '@/lib/stride/types';
 
 import {
@@ -16,13 +21,10 @@ import {
   Sun,
   CalendarRange,
   CalendarDays,
-  ListFilter,
   FileText,
-  Grid2X2,
   Flame,
   Timer,
   TrendingUp,
-  Sparkles,
   Settings,
   Plus,
   Cloud,
@@ -32,7 +34,6 @@ import {
   Archive,
   Undo2,
   LayoutGrid,
-  History,
   CheckCheck,
   GraduationCap,
   AlarmClock,
@@ -45,6 +46,8 @@ import { Tasks, TaskEditor, ProjectEditor } from './features/tasks';
 import { Calendar } from './features/views';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { WebMCP } from '@/lib/stride/webmcp';
+import { TaskActionSurface } from './task-actions';
+import { CoreItemActionSurface } from './core-item-actions';
 import { Modal } from './primitives';
 import { Loading } from './forms';
 import { NetworkClock } from './network-clock';
@@ -59,9 +62,7 @@ const icons = {
   upcoming: CalendarRange,
   tasks: CheckCheck,
   calendar: CalendarDays,
-  filters: ListFilter,
-  pages: FileText,
-  databases: Grid2X2,
+  notes: FileText,
   habits: Flame,
   focus: Timer,
   school: GraduationCap,
@@ -71,9 +72,7 @@ const icons = {
   matrix: LayoutGrid,
   countdowns: CalendarRange,
   insights: TrendingUp,
-  explore: Sparkles,
   archive: Archive,
-  history: History,
   settings: Settings,
 };
 const names: Record<string, string> = {
@@ -83,9 +82,7 @@ const names: Record<string, string> = {
   upcoming: 'Upcoming',
   tasks: 'All tasks',
   calendar: 'Calendar',
-  filters: 'Filters & labels',
-  pages: 'Pages',
-  databases: 'Databases',
+  notes: 'Notes',
   habits: 'Habits',
   focus: 'Focus',
   school: 'School',
@@ -95,13 +92,10 @@ const names: Record<string, string> = {
   matrix: 'Eisenhower Matrix',
   countdowns: 'Countdowns',
   insights: 'Insights',
-  explore: 'Explore',
   archive: 'Completed tasks',
-  history: 'Activity',
   settings: 'Settings',
 };
-const Pages = lazy(() => import('./features/pages'));
-const Databases = lazy(() => import('./features/databases'));
+const Notes = lazy(() => import('./features/notes'));
 const SettingsPage = lazy(() => import('./features/settings'));
 const School = lazy(() => import('./features/school'));
 const Alarms = lazy(() =>
@@ -130,12 +124,6 @@ const Countdowns = lazy(() =>
 const Insights = lazy(() =>
   import('./features/productivity').then((m) => ({ default: m.Insights })),
 );
-const Explore = lazy(() =>
-  import('./features/productivity').then((m) => ({ default: m.Explore })),
-);
-const Activity = lazy(() =>
-  import('./features/productivity').then((m) => ({ default: m.Activity })),
-);
 const enabled = [
   'inbox',
   'today',
@@ -143,9 +131,7 @@ const enabled = [
   'upcoming',
   'tasks',
   'calendar',
-  'filters',
-  'pages',
-  'databases',
+  'notes',
   'habits',
   'focus',
   'school',
@@ -155,20 +141,52 @@ const enabled = [
   'matrix',
   'countdowns',
   'insights',
-  'explore',
   'archive',
-  'history',
 ];
-function readRoute() {
+let committedRoute: string | undefined;
+let routeTransition = 0;
+function hashRoute() {
   try {
-    return decodeURIComponent(location.hash.slice(1)) || 'today';
+    return normalizeRoute(
+      decodeURIComponent(location.hash.slice(1)) || 'today',
+    );
   } catch {
     return 'today';
   }
 }
+function readRoute() {
+  return (committedRoute ??= hashRoute());
+}
 function subscribeRoute(callback: () => void) {
-  window.addEventListener('hashchange', callback);
-  return () => window.removeEventListener('hashchange', callback);
+  const transition = () => {
+    const next = hashRoute(),
+      previous = readRoute(),
+      run = ++routeTransition;
+    if (next === previous) return;
+    if (!hasUnsavedNoteDrafts()) {
+      committedRoute = next;
+      callback();
+      return;
+    }
+    void flushAllNoteDrafts()
+      .then(() => {
+        if (run !== routeTransition) return;
+        committedRoute = next;
+        callback();
+      })
+      .catch((error) => {
+        if (run === routeTransition)
+          history.replaceState(null, '', `#${previous}`);
+        window.dispatchEvent(
+          new PromiseRejectionEvent('unhandledrejection', {
+            promise: Promise.resolve(),
+            reason: error,
+          }),
+        );
+      });
+  };
+  window.addEventListener('hashchange', transition);
+  return () => window.removeEventListener('hashchange', transition);
 }
 function Workspace() {
   const store = useStride();
@@ -224,11 +242,8 @@ function Workspace() {
       ? route.split('/')[1] || ''
       : '';
   const projectionRoute =
-    ['today', 'inbox', 'upcoming', 'tasks', 'archive', 'filters'].includes(
-      route,
-    ) ||
-    (!!routeProject && routeProject === store.startupProject) ||
-    route.startsWith('filter/');
+    ['today', 'inbox', 'upcoming', 'tasks', 'archive'].includes(route) ||
+    (!!routeProject && routeProject === store.startupProject);
   useEffect(() => {
     const run = ++searchRun.current;
     if (search === null) return;
@@ -264,8 +279,13 @@ function Workspace() {
         add();
       }
     };
+    const addTask = (event: Event) => add((event as CustomEvent).detail || {});
+    window.addEventListener('stride-add-task', addTask);
     window.addEventListener('keydown', key);
-    return () => window.removeEventListener('keydown', key);
+    return () => {
+      window.removeEventListener('keydown', key);
+      window.removeEventListener('stride-add-task', addTask);
+    };
   }, []);
   useEffect(() => {
     if (!compact || !navOpen) return;
@@ -316,11 +336,9 @@ function Workspace() {
   const projects = store.entities.filter(
     (e) => e.kind === 'project',
   ) as Project[];
-  const filters = store.entities.filter(
-    (e) => e.kind === 'view' && e.data.filter,
-  );
   const title =
     names[route] ||
+    (route.startsWith('settings/') ? 'Settings' : '') ||
     stringValue(
       store.entities.find((e) => e.id === route.split('/')[1])?.data.title ||
         'Workspace',
@@ -331,10 +349,7 @@ function Workspace() {
       setTaskEditor(e as Task);
     } else if (e.kind === 'course' || e.kind === 'assignment') {
       navigate(`${e.kind}/${e.id}`);
-    } else
-      navigate(
-        `${e.kind === 'block' ? 'page' : e.kind}/${e.kind === 'block' ? e.data.page : e.id}`,
-      );
+    } else navigate(`${e.kind === 'folder' ? 'notes' : e.kind}/${e.id}`);
   };
   return (
     <div className="stride-shell">
@@ -441,17 +456,28 @@ function Workspace() {
           </div>
           <nav className="nav-group">
             {projects.map((p) => (
-              <button
-                className={`nav-item ${route === `project/${p.id}` ? 'active' : ''}`}
+              <CoreItemActionSurface
                 key={p.id}
-                onClick={() => navigate(`project/${p.id}`)}
+                entity={p}
+                onOpen={() => navigate(`project/${p.id}`)}
               >
-                <i
-                  className="project-dot"
-                  style={{ background: p.data.color }}
-                />
-                {p.data.title}
-              </button>
+                {(menu) => (
+                  <div className="sidebar-project-row">
+                    <button
+                      className={`nav-item ${route === `project/${p.id}` ? 'active' : ''}`}
+                      key={p.id}
+                      onClick={() => navigate(`project/${p.id}`)}
+                    >
+                      <i
+                        className="project-dot"
+                        style={{ background: p.data.color }}
+                      />
+                      {p.data.title}
+                    </button>
+                    {menu}
+                  </div>
+                )}
+              </CoreItemActionSurface>
             ))}
             {projects.length === 0 && (
               <button
@@ -466,23 +492,6 @@ function Workspace() {
               </button>
             )}
           </nav>
-          {filters.length > 0 && (
-            <>
-              <div className="nav-label">SAVED FILTERS</div>
-              <nav className="nav-group">
-                {filters.map((f) => (
-                  <button
-                    className="nav-item"
-                    key={f.id}
-                    onClick={() => navigate(`filter/${f.id}`)}
-                  >
-                    <ListFilter />
-                    {stringValue(f.data.title)}
-                  </button>
-                ))}
-              </nav>
-            </>
-          )}
         </div>
         <footer>
           <div className="level-card">
@@ -566,7 +575,7 @@ function Workspace() {
           </div>
         </header>
         <div
-          className="page-content"
+          className={`page-content ${route === 'notes' || route.startsWith('note/') || route.startsWith('notes/') ? 'notes-page-content' : ''}`}
           style={
             route.startsWith('project/')
               ? {
@@ -587,12 +596,20 @@ function Workspace() {
                 <WeeklyReview onEdit={setTaskEditor} />
               ) : route === 'calendar' ? (
                 <Calendar onEdit={setTaskEditor} onAdd={() => add()} />
-              ) : route === 'settings' ? (
-                <SettingsPage />
-              ) : route === 'pages' || route.startsWith('page/') ? (
-                <Pages pageId={route.split('/')[1]} />
-              ) : route === 'databases' || route.startsWith('database/') ? (
-                <Databases databaseId={route.split('/')[1]} />
+              ) : route === 'settings' || route.startsWith('settings/') ? (
+                <SettingsPage key={route} initialTab={route.split('/')[1]} />
+              ) : route === 'notes' ||
+                route.startsWith('note/') ||
+                route.startsWith('notes/') ? (
+                <Notes
+                  key={route}
+                  noteId={
+                    route.startsWith('note/') ? route.split('/')[1] : undefined
+                  }
+                  folderId={
+                    route.startsWith('notes/') ? route.split('/')[1] : undefined
+                  }
+                />
               ) : route === 'habits' || route.startsWith('habit/') ? (
                 <Habits />
               ) : route === 'focus' ? (
@@ -613,10 +630,6 @@ function Workspace() {
                 <Countdowns />
               ) : route === 'insights' ? (
                 <Insights />
-              ) : route === 'explore' ? (
-                <Explore />
-              ) : route === 'history' ? (
-                <Activity />
               ) : (
                 <Tasks
                   key={route}
@@ -751,7 +764,7 @@ function Workspace() {
           <input
             className="text-input"
             aria-label="Workspace search"
-            placeholder="Tasks, pages, projects, blocks…"
+            placeholder="Tasks, notes, projects…"
             value={search}
             onChange={(e) => {
               searchRun.current++;
@@ -771,21 +784,43 @@ function Workspace() {
                 Search is unavailable. Please retry.
               </p>
             )}
-            {searchResults.map((e) => (
-              <button
-                key={e.id}
-                className="search-result"
-                onClick={() => goResult(e)}
-              >
-                <span>
-                  {stringValue(e.data.title || e.data.text || 'Untitled').slice(
-                    0,
-                    150,
-                  )}
-                </span>
-                <small>{e.kind}</small>
-              </button>
-            ))}
+            {searchResults.map((entity) => {
+              const row = (menu: React.ReactNode) => (
+                <div className="core-item-row">
+                  <button
+                    className="search-result"
+                    onClick={() => goResult(entity)}
+                  >
+                    <span>
+                      {stringValue(
+                        entity.data.title ||
+                          entity.data.text ||
+                          'Untitled note',
+                      ).slice(0, 150)}
+                    </span>
+                    <small>{entity.kind}</small>
+                  </button>
+                  {menu}
+                </div>
+              );
+              return entity.kind === 'task' ? (
+                <TaskActionSurface
+                  key={entity.id}
+                  task={entity}
+                  onEdit={() => goResult(entity)}
+                >
+                  {row}
+                </TaskActionSurface>
+              ) : (
+                <CoreItemActionSurface
+                  key={entity.id}
+                  entity={entity}
+                  onOpen={() => goResult(entity)}
+                >
+                  {row}
+                </CoreItemActionSurface>
+              );
+            })}
             {searchResults.length === 0 && searchState === 'done' && (
               <p className="muted">No matching records.</p>
             )}

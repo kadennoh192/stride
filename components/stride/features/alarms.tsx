@@ -1,4 +1,5 @@
 'use client';
+import { CoreItemActionSurface } from '../core-item-actions';
 import { useEffect, useState } from 'react';
 import { useStride } from '@/lib/stride/store';
 import {
@@ -429,22 +430,33 @@ export function Alarms() {
       </div>
       <div className="search-results">
         {alarms.map((alarm) => (
-          <button
-            className="search-result"
+          <CoreItemActionSurface
             key={alarm.id}
-            onClick={() => setEditing(alarm)}
+            entity={alarm}
+            onOpen={() => setEditing(alarm)}
           >
-            <span>
-              <strong>{alarm.data.label}</strong> ·{' '}
-              {alarm.data.enabled ? 'Enabled' : 'Disabled'}
-            </span>
-            <small>
-              {alarm.data.nextOccurrence
-                ? new Date(alarm.data.nextOccurrence).toLocaleString()
-                : 'No next occurrence'}{' '}
-              · {String((alarm.data.schedule as AlarmSchedule).rule)}
-            </small>
-          </button>
+            {(menu) => (
+              <div className="core-item-row">
+                <button
+                  className="search-result"
+                  key={alarm.id}
+                  onClick={() => setEditing(alarm)}
+                >
+                  <span>
+                    <strong>{alarm.data.label}</strong> ·{' '}
+                    {alarm.data.enabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                  <small>
+                    {alarm.data.nextOccurrence
+                      ? new Date(alarm.data.nextOccurrence).toLocaleString()
+                      : 'No next occurrence'}{' '}
+                    · {String((alarm.data.schedule as AlarmSchedule).rule)}
+                  </small>
+                </button>
+                {menu}
+              </div>
+            )}
+          </CoreItemActionSurface>
         ))}
         {!alarms.length && <p>No alarms yet.</p>}
       </div>

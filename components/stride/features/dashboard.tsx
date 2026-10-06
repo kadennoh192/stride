@@ -1,4 +1,8 @@
 'use client';
+import { CoreItemActionSurface } from '../core-item-actions';
+import { Field, Select } from '../forms';
+import { taskLayouts } from '@/lib/stride/notes';
+import type { TaskLayout } from '@/lib/stride/types';
 import { useMemo, useState } from 'react';
 import { useStride } from '@/lib/stride/store';
 import {
@@ -33,6 +37,9 @@ const asClock = (instant: string) =>
 
 export function PlannerSetup() {
   const store = useStride();
+  const [taskLayout, setTaskLayout] = useState<TaskLayout>(
+    store.settings.taskLayout,
+  );
   const [days, setDays] = useState(store.settings.workingDays);
   const [start, setStart] = useState(store.settings.workStart);
   const [end, setEnd] = useState(store.settings.workEnd);
@@ -82,6 +89,16 @@ export function PlannerSetup() {
           />
         </label>
       </div>
+      <Field label="Default task layout">
+        <Select
+          value={taskLayout}
+          onChange={(value) => setTaskLayout(value as TaskLayout)}
+          options={taskLayouts.map((value) => ({
+            value,
+            label: value[0].toUpperCase() + value.slice(1),
+          }))}
+        />
+      </Field>
       <label className="checkline">
         <input
           type="checkbox"
@@ -134,6 +151,7 @@ export function PlannerSetup() {
             }
             void store.setSettings({
               plannerSetup: true,
+              taskLayout,
               workingDays: days,
               workStart: start,
               workEnd: end,
@@ -497,13 +515,21 @@ export function DayDashboard({
               <section className="dashboard-card" key={card}>
                 <h2>Countdowns</h2>
                 {countdowns.map((item) => (
-                  <p key={item.id}>
-                    {item.data.title} ·{' '}
-                    {Math.ceil(
-                      (Date.parse(item.data.date) - Date.now()) / 86400000,
-                    )}{' '}
-                    days
-                  </p>
+                  <CoreItemActionSurface key={item.id} entity={item}>
+                    {(menu) => (
+                      <div className="core-item-row">
+                        <p>
+                          {item.data.title} ·{' '}
+                          {Math.ceil(
+                            (Date.parse(item.data.date) - Date.now()) /
+                              86400000,
+                          )}{' '}
+                          days
+                        </p>
+                        {menu}
+                      </div>
+                    )}
+                  </CoreItemActionSurface>
                 ))}
                 <a href="#countdowns">Open countdowns</a>
               </section>
@@ -636,17 +662,37 @@ export function WeeklyReview({ onEdit }: { onEdit: (task: Task) => void }) {
               store.settings,
             );
             return (
-              <p key={project.id}>
-                <a href={`#project/${project.id}`}>{project.data.title}</a>:{' '}
-                {issues.length ? issues.join(' · ') : 'On track'}
-              </p>
+              <CoreItemActionSurface key={project.id} entity={project}>
+                {(menu) => (
+                  <div className="core-item-row">
+                    <p>
+                      <a href={`#project/${project.id}`}>
+                        {project.data.title}
+                      </a>
+                      : {issues.length ? issues.join(' · ') : 'On track'}
+                    </p>
+                    {menu}
+                  </div>
+                )}
+              </CoreItemActionSurface>
             );
           })}
         </section>
         <section className="dashboard-card">
           <h2>3. Habits</h2>
           {habits.map((habit) => (
-            <p key={habit.id}>{habit.data.title}</p>
+            <CoreItemActionSurface
+              key={habit.id}
+              entity={habit}
+              onOpen={() => location.assign(`#habit/${habit.id}`)}
+            >
+              {(menu) => (
+                <div className="core-item-row">
+                  <p>{habit.data.title}</p>
+                  {menu}
+                </div>
+              )}
+            </CoreItemActionSurface>
           ))}
           <a href="#habits">Review habits</a>
         </section>

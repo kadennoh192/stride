@@ -1,3 +1,4 @@
+import { RESET_GENERATION } from './reset-generation';
 import {
   draftFields,
   entityRevision,
@@ -19,10 +20,11 @@ import {
   shiftDate,
 } from './types';
 import { validateEntity, validateGraph, validField } from './validation';
-export const VERSION = 8;
-export const SNAPSHOT_VERSION = 3;
+export const VERSION = 9;
+export const SNAPSHOT_VERSION = 4;
 export interface Snapshot {
   version: number;
+  generation: string;
   fields: Record<string, Field>;
   outbox: Change[];
   history: Change[];
@@ -36,6 +38,7 @@ export interface Snapshot {
 }
 export const blank = (owner = 'guest'): Snapshot => ({
   version: SNAPSHOT_VERSION,
+  generation: RESET_GENERATION,
   fields: {},
   outbox: [],
   history: [],
@@ -66,11 +69,10 @@ interface StoredOperation {
 }
 const SEARCHABLE_KINDS: Kind[] = [
   'task',
-  'page',
+  'note',
+  'folder',
   'project',
-  'database',
   'habit',
-  'block',
   'course',
   'assignment',
 ];
@@ -88,7 +90,14 @@ function metadata(snapshot: Snapshot, revision: number): StoredMeta {
   return { ...meta, revision };
 }
 function createStores(db: IDBDatabase) {
-  for (const name of ['state', 'files', 'recovery', 'fileQueue', 'fileDeletes'])
+  for (const name of [
+    'state',
+    'files',
+    'recovery',
+    'fileQueue',
+    'fileDeletes',
+    'noteDrafts',
+  ])
     if (!db.objectStoreNames.contains(name)) db.createObjectStore(name);
   if (!db.objectStoreNames.contains('records')) {
     const records = db.createObjectStore('records', {
@@ -132,7 +141,7 @@ export function openDB() {
     }
     const request = indexedDB.open('stride-workspace', VERSION);
     let blocked = false;
-    request.onupgradeneeded = (event) => {
+    request.onupgradeneeded = () => {
       const db = request.result;
       const tx = request.transaction!;
       createStores(db);
@@ -184,168 +193,17 @@ export function openDB() {
           'active',
           'searchOverflow',
         ]);
-      if (event.oldVersion > 0 && event.oldVersion < 6) {
-        const existingRecords = records.openCursor();
-        existingRecords.onsuccess = () => {
-          const cursor = existingRecords.result;
-          if (!cursor) return;
-          const next = indexedRecord(
-            stringValue(cursor.value.owner),
-            entityFromIndexedRecord(cursor.value),
-          );
-          // Version-three records may only have the derived container/due
-          // values. Retain those while adding the newer active/search indexes.
-          cursor.update({
-            ...next,
-            container: next.container || stringValue(cursor.value.container),
-            due: next.due || stringValue(cursor.value.due),
-          });
-          cursor.continue();
-        };
-      }
-      const migrate = (source: Snapshot, owner: string) => {
-        const snapshot = {
-          ...source,
-          version: SNAPSHOT_VERSION,
-          owner,
-          conflicts: source.conflicts || [],
-        };
-        tx.objectStore('meta').put(metadata(snapshot, 0));
-        for (const [key, f] of Object.entries(snapshot.fields))
-          tx.objectStore('fields').put({ ...f, owner, fieldKey: key });
-        const pending = new Set(snapshot.outbox.map((c) => c.id));
-        const changes = new Map(
-          [...snapshot.history, ...snapshot.outbox].map((c) => [c.id, c]),
-        );
-        let sequence = 0;
-        for (const c of changes.values())
-          tx.objectStore('operations').put({
-            owner,
-            id: c.id,
-            change: c,
-            pending: pending.has(c.id) ? 1 : 0,
-            sequence: sequence++,
-          });
-        for (const conflict of snapshot.conflicts)
-          tx.objectStore('conflicts').put({ ...conflict, owner });
-        for (const e of materialize(snapshot.fields, true))
-          records.put(indexedRecord(owner, e));
-      };
-      if (event.oldVersion >= 3 && event.oldVersion < 8) {
-        const metas = tx.objectStore('meta').openCursor();
-        metas.onsuccess = () => {
-          const cursor = metas.result;
-          if (!cursor) return;
-          const previous = cursor.value as StoredMeta;
-          const owner = previous.owner;
-          const fields = tx.objectStore('fields').index('owner').getAll(owner);
-          const operations = tx
-            .objectStore('operations')
-            .index('owner')
-            .getAll(owner);
-          const conflicts = tx
-            .objectStore('conflicts')
-            .index('owner')
-            .getAll(owner);
-          const files = tx.objectStore('files').getAll();
-          const preserve = () => {
-            if (
-              !fields.readyState ||
-              fields.readyState !== 'done' ||
-              operations.readyState !== 'done' ||
-              conflicts.readyState !== 'done' ||
-              files.readyState !== 'done'
-            )
-              return;
-            const { revision: _revision, ...meta } = previous;
-            const history = (operations.result as StoredOperation[]).sort(
-              (a, b) => a.sequence - b.sequence,
-            );
-            const snapshot: Snapshot = {
-              ...meta,
-              fields: Object.fromEntries(
-                (fields.result as StoredField[]).map(
-                  ({ owner: _owner, fieldKey, ...field }) => [fieldKey, field],
-                ),
-              ),
-              history: history.map((operation) => operation.change),
-              outbox: history
-                .filter((operation) => operation.pending === 1)
-                .map((operation) => operation.change),
-              conflicts: conflicts.result as Conflict[],
-            };
-            tx.objectStore('recovery').put(
-              {
-                snapshot,
-                files: (files.result as LocalFile[]).filter(
-                  (file) => file.owner === owner,
-                ),
-              },
-              `${owner}:migration-v8`,
-            );
-            tx.objectStore('meta').put({
-              ...previous,
-              version: SNAPSHOT_VERSION,
-            });
-          };
-          fields.onsuccess = preserve;
-          operations.onsuccess = preserve;
-          conflicts.onsuccess = preserve;
-          files.onsuccess = preserve;
-          cursor.continue();
-        };
-      }
-      const old = tx.objectStore('state').openCursor();
-      old.onsuccess = () => {
-        const cursor = old.result;
-        if (!cursor) return;
-        const key = stringValue(cursor.key);
-        if (event.oldVersion === 1 && key === 'workspace') {
-          tx.objectStore('recovery').put(cursor.value, 'legacy-v1');
-          migrate(cursor.value, 'guest');
-        } else if (key.startsWith('workspace:') && event.oldVersion === 2) {
-          const source = cursor.value as Snapshot;
-          const owner = key.slice(10);
-          const fileRequest = tx.objectStore('files').getAll();
-          fileRequest.onsuccess = () =>
-            tx.objectStore('recovery').put(
-              {
-                snapshot: source,
-                files: (fileRequest.result as LocalFile[]).filter(
-                  (f) => f.owner === owner,
-                ),
-              },
-              `${owner}:migration-v2`,
-            );
-          migrate(cursor.value, key.slice(10));
-        }
-        cursor.continue();
-      };
-      if (event.oldVersion === 1) {
-        const files = tx.objectStore('files').openCursor();
-        files.onsuccess = () => {
-          const cursor = files.result;
-          if (!cursor) return;
-          if (cursor.value instanceof Blob) {
-            const id = stringValue(cursor.key);
-            tx.objectStore('files').put(
-              {
-                id,
-                blob: cursor.value,
-                name: 'Legacy attachment',
-                hash: '',
-                uploaded: false,
-                owner: 'guest',
-              },
-              `guest:${id}`,
-            );
-            tx.objectStore('fileQueue').put(id, `guest:${id}`);
-          }
-          cursor.continue();
-        };
-      }
+      // Deliberately bypass all retired migration readers: no recovery copy of
+      // the authorized purge may be created, even when upgrading schema one.
+      if (!db.objectStoreNames.contains('reset')) db.createObjectStore('reset');
+      for (const name of Array.from(db.objectStoreNames))
+        if (name !== 'reset') tx.objectStore(name).clear();
+      tx.objectStore('reset').put(
+        { generation: RESET_GENERATION, completedAt: new Date().toISOString() },
+        'workspace',
+      );
     };
-    request.onsuccess = () => {
+    request.onsuccess = async () => {
       if (blocked) {
         request.result.close();
         return;
@@ -354,8 +212,20 @@ export function openDB() {
         request.result.close();
         dbPromise = undefined;
         cached.clear();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('stride-storage-invalidated'));
+          // This tab must not reopen the new database with stale in-memory data.
+          window.location.reload();
+        }
       };
-      resolve(request.result);
+      try {
+        await finishDeviceReset(request.result);
+        resolve(request.result);
+      } catch (error) {
+        request.result.close();
+        dbPromise = undefined;
+        reject(error);
+      }
     };
     request.onerror = () => {
       dbPromise = undefined;
@@ -372,6 +242,58 @@ export function openDB() {
     };
   }));
 }
+/** Finish device cleanup before exposing any records. The durable marker lives
+ * outside normal settings; interrupted cleanup is retried without wiping new data. */
+async function finishDeviceReset(database: IDBDatabase) {
+  const marker = await new Promise<
+    { generation: string; preferencesCleared?: boolean } | undefined
+  >((resolve, reject) => {
+    const request = database
+      .transaction('reset')
+      .objectStore('reset')
+      .get('workspace');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  if (marker?.generation !== RESET_GENERATION)
+    throw new Error('Storage reset marker is missing. Close Stride and retry.');
+  if (marker.preferencesCleared) return;
+  if (typeof localStorage !== 'undefined') {
+    for (const key of Object.keys(localStorage))
+      if (key.startsWith('stride-') && key !== 'stride-last-account')
+        localStorage.removeItem(key);
+  }
+  if (typeof sessionStorage !== 'undefined')
+    for (const key of Object.keys(sessionStorage))
+      if (key.startsWith('stride-')) sessionStorage.removeItem(key);
+  if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
+    const registration = await navigator.serviceWorker.getRegistration('/');
+    const subscription = await registration?.pushManager?.getSubscription();
+    await subscription?.unsubscribe();
+  }
+  await new Promise<void>((resolve, reject) => {
+    const tx = database.transaction('reset', 'readwrite');
+    tx.objectStore('reset').put(
+      { ...marker, preferencesCleared: true },
+      'workspace',
+    );
+    tx.oncomplete = () => resolve();
+    tx.onabort = tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function localResetStatus() {
+  const database = await openDB();
+  return new Promise<unknown>((resolve, reject) => {
+    const request = database
+      .transaction('reset')
+      .objectStore('reset')
+      .get('workspace');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
 function indexedRecord(owner: string, e: Entity) {
   const searchable = searchableText(e);
   const characters = Array.from(searchable);
@@ -379,9 +301,7 @@ function indexedRecord(owner: string, e: Entity) {
     ...e,
     owner,
     active: e.deleted ? 0 : 1,
-    container: stringValue(
-      e.data.database || e.data.page || e.data.project || '',
-    ),
+    container: stringValue(e.data.folder || e.data.project || ''),
     due: stringValue(e.data.due || ''),
     searchGrams:
       !e.deleted && SEARCHABLE_KINDS.includes(e.kind)
@@ -512,7 +432,10 @@ export async function transact(
     getSnapshot(tx, owner, (snapshot, currentRevision) => {
       try {
         source = snapshot;
-        if (snapshot.version !== SNAPSHOT_VERSION)
+        if (
+          snapshot.version !== SNAPSHOT_VERSION ||
+          snapshot.generation !== RESET_GENERATION
+        )
           throw new Error('This workspace requires a newer version of Stride.');
         const draft = draftFields(snapshot.fields);
         fieldChanges = draft.changes;
@@ -865,12 +788,11 @@ export async function startupProjection(
   project = '',
 ): Promise<Entity[]> {
   const through = shiftDate(dateKey(), 90);
-  const [undated, scheduled, projects, views, settings, completions, scoped] =
+  const [undated, scheduled, projects, settings, completions, scoped] =
     await Promise.all([
       indexedDueRecords(owner, 'task', '', '', 100),
       indexedDueRecords(owner, 'task', '0000-01-01', through, 300),
       indexedRecordPage(owner, 'project', undefined, 100),
-      indexedRecordPage(owner, 'view', undefined, 100),
       indexedRecordPage(owner, 'settings', undefined, 1),
       indexedRecordPage(owner, 'completion', undefined, 100),
       project
@@ -884,7 +806,6 @@ export async function startupProjection(
         ...scheduled,
         ...scoped,
         ...projects,
-        ...views,
         ...settings,
         ...completions,
       ].map((entity) => [entity.id, entity]),
@@ -1048,20 +969,9 @@ export function applyEdits(s: Snapshot, edits: Edit[], label: string) {
   const graphRecords = [...existing.values()].filter(
     (entity): entity is Entity => !!entity,
   );
-  const changedDatabases = new Set(
-    edits.filter((edit) => edit.kind === 'database').map((edit) => edit.id),
-  );
   const changedCourses = new Set(
     edits.filter((edit) => edit.kind === 'course').map((edit) => edit.id),
   );
-  if (changedDatabases.size)
-    for (const entity of entitiesFromFields(s.fields))
-      if (
-        entity.kind === 'row' &&
-        changedDatabases.has(entity.data.database) &&
-        !existing.has(entity.id)
-      )
-        graphRecords.push(entity);
   if (changedCourses.size)
     for (const entity of entitiesFromFields(s.fields))
       if (
@@ -1330,6 +1240,13 @@ export async function restoreSnapshot(
   files: LocalFile[],
   owner: string,
 ) {
+  if (
+    snapshot.version !== SNAPSHOT_VERSION ||
+    snapshot.generation !== RESET_GENERATION
+  )
+    throw new Error(
+      'This backup predates the permanent workspace reset and is incompatible.',
+    );
   await transact(
     (current) => {
       const imported = materialize(snapshot.fields, true);

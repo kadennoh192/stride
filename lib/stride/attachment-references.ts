@@ -1,3 +1,5 @@
+import { documentAttachments } from './notes';
+import type { NoteNode } from './types';
 import type { Field } from './types';
 import type { Snapshot } from './storage';
 function record(value: unknown): value is Record<string, unknown> {
@@ -17,24 +19,16 @@ function collectAttachmentReferences(
         if (record(item) && typeof item.name === 'string' && !('kind' in item))
           file(item.id);
   };
-  const row = (value: unknown) => {
-    if (!record(value)) return;
-    for (const [key, cell] of Object.entries(value)) {
-      if (key.startsWith('cell_')) fileList(cell);
-      if (key === 'values' && record(cell))
-        for (const legacyCell of Object.values(cell)) fileList(legacyCell);
-    }
-  };
   const visit = (field: Field) => {
-    if (field.kind === 'block' && field.key === 'file') file(field.value);
-    else if (field.kind === 'row') row({ [field.key]: field.value });
+    if (
+      field.kind === 'note' &&
+      field.key === 'document' &&
+      record(field.value)
+    )
+      for (const id of documentAttachments(field.value as unknown as NoteNode))
+        file(id);
     else if (field.kind === 'assignment' && field.key === 'attachments')
       fileList(field.value);
-    else if (field.kind === 'template') {
-      if (field.key === 'row') row(field.value);
-      else if (field.key === 'blocks' && Array.isArray(field.value))
-        for (const block of field.value) if (record(block)) file(block.file);
-    }
   };
   Object.values(snapshot.fields).forEach(visit);
   if (includeRecoverable) {
@@ -48,7 +42,7 @@ function collectAttachmentReferences(
   return ids;
 }
 
-/** All recoverable versions need bytes, including deleted records and saved templates. */
+/** All recoverable versions need bytes, including deleted notes and assignment attachments. */
 export function attachmentReferences(snapshot: Snapshot): Set<string> {
   const ids = collectAttachmentReferences(snapshot, true);
   for (const field of Object.values(snapshot.fields))

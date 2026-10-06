@@ -42,7 +42,7 @@ const scheduler = {
               'X-Stride-Time': timestamp,
               'X-Stride-Nonce': nonce,
               'X-Stride-Signature': signature,
-              'OAI-Sites-Authorization': env.SITES_ACCESS_TOKEN,
+              'OAI-Sites-Authorization': `Bearer ${env.SITES_ACCESS_TOKEN}`,
             },
             body,
             signal: AbortSignal.timeout(55000),

@@ -1,3 +1,5 @@
+import { noteData, noteText, documentAttachments } from '../lib/stride/notes';
+import type { NoteDocument } from '../lib/stride/types';
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -120,21 +122,13 @@ void test('complete backups round-trip records and bytes; corruption is rejected
         [
           {
             id: pageId,
-            kind: 'page',
-            data: { title: 'A page', icon: '📄', cover: '', parent: '' },
+            kind: 'note',
+            data: noteData('', 'A page'),
           },
           {
             id: uid(),
-            kind: 'block',
-            data: {
-              page: pageId,
-              type: 'file',
-              file: fileId,
-              name: 'note.txt',
-              text: 'note',
-              order: 1,
-              checked: false,
-            },
+            kind: 'note',
+            data: attachmentNoteData(fileId, 'note.txt'),
           },
         ],
         'Setup',
@@ -155,12 +149,12 @@ void test('complete backups round-trip records and bytes; corruption is rejected
   parsed.files = [];
   await assert.rejects(stageBackup(JSON.stringify(parsed)), /missing/);
   parsed.version = 99;
-  await assert.rejects(stageBackup(JSON.stringify(parsed)), /Unsupported/);
+  await assert.rejects(stageBackup(JSON.stringify(parsed)), /incompatible/);
   const archive = await exportBackupArchive(owner);
   const archived = await stageBackupFile(archive.blob);
   assert.equal(archived.records, 2);
   assert.equal(await archived.files[0].blob.text(), 'original attachment');
-  assert.ok(archive.code.startsWith('STRIDE3.'));
+  assert.ok(archive.code.startsWith('STRIDE5.'));
   assert.equal((await stageBackupFile(new Blob([exported.json]))).records, 2);
   const corrupted = new Uint8Array(await archive.blob.arrayBuffer());
   corrupted[80] ^= 1;
@@ -184,8 +178,8 @@ void test('restore preserves original record and file bytes in recovery', async 
         [
           {
             id,
-            kind: 'page',
-            data: { title: 'Before', icon: '', cover: '', parent: '' },
+            kind: 'note',
+            data: noteData('', 'Before'),
           },
         ],
         'Before',
@@ -199,8 +193,8 @@ void test('restore preserves original record and file bytes in recovery', async 
     [
       {
         id,
-        kind: 'page',
-        data: { title: 'After', icon: '', cover: '', parent: '' },
+        kind: 'note',
+        data: noteData('', 'After'),
       },
     ],
     'After',
@@ -518,7 +512,7 @@ void test('backup capture is immutable across later record and attachment edits'
     (s) =>
       applyEdits(
         s,
-        [{ id, kind: 'page', data: { title: 'Before' } }],
+        [{ id, kind: 'note', data: noteData('', 'Before') }],
         'Before',
       ),
     owner,
@@ -527,7 +521,11 @@ void test('backup capture is immutable across later record and attachment edits'
   const captured = await captureWorkspace(owner);
   await transact(
     (s) =>
-      applyEdits(s, [{ id, kind: 'page', data: { title: 'After' } }], 'After'),
+      applyEdits(
+        s,
+        [{ id, kind: 'note', data: noteData('', 'After') }],
+        'After',
+      ),
     owner,
   );
   await saveFile(fileId, new Blob(['after']), owner);
@@ -772,19 +770,13 @@ void test('restoring an older backup clears its purge marker and cancels queued 
     [
       {
         id: 'page',
-        kind: 'page',
-        data: { title: 'Recovered page', icon: '', cover: '', parent: '' },
+        kind: 'note',
+        data: noteData('', 'Recovered page'),
       },
       {
         id: 'block',
-        kind: 'block',
-        data: {
-          page: 'page',
-          type: 'file',
-          order: 0,
-          file: 'file',
-          name: 'recovered.txt',
-        },
+        kind: 'note',
+        data: attachmentNoteData('file', 'recovered.txt'),
       },
     ],
     'Backup fixture',
@@ -825,7 +817,9 @@ void test('restoring an older backup clears its purge marker and cancels queued 
   assert.deepEqual(await pendingFileDeletes(owner), []);
   assert.equal(
     materialize((await load(owner)).fields).some(
-      (entity) => entity.kind === 'block' && entity.data.file === 'file',
+      (entity) =>
+        entity.kind === 'note' &&
+        documentAttachments(entity.data.document).has('file'),
     ),
     true,
   );
@@ -834,3 +828,11 @@ void test('restoring an older backup clears its purge marker and cancels queued 
     'restored bytes',
   );
 });
+
+function attachmentNoteData(id: string, name: string) {
+  const document: NoteDocument = {
+    type: 'doc',
+    content: [{ type: 'attachment', attrs: { id, name, image: false } }],
+  };
+  return { ...noteData('', name), document, text: noteText(document) };
+}

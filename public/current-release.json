@@ -1,17 +1,21 @@
 {
-  "version": "0.3.0",
-  "build": "3ee7db6d566ade65",
-  "date": "2026-09-23",
-  "summary": "Local day planning, dashboard, weekly review, project health, and updated Gemini model selection.",
+  "version": "0.4.0",
+  "build": "e03ceed7d9064e01",
+  "date": "2026-10-05",
+  "summary": "A calmer workspace, continuous Notes, shared quick actions, and a permanent one-time workspace reset.",
   "changes": {
     "Added": [
-      "Smart day planning and 14-day rescheduling previews with capacity and dependency checks",
-      "Configurable Today dashboard, weekly review, project health, and focus-based estimate suggestions",
-      "Optional Open-Meteo weather with device-local location cache"
+      "Continuous rich-text Notes with nested folders, pins, tables, checklists, images, and durable file attachments",
+      "Default task layout and screen/project overrides in setup and Settings",
+      "Shared right-click, keyboard, and touch action menus across core items"
     ],
     "Improved": [
-      "Gemini model listing, selection, and clearer failure handling",
-      "Planned starts separate from deadlines, including School assignments"
+      "Compact toolbars, task filtering, responsive Notes panes, and draft-safe autosave",
+      "Generation-gated sync and file transfers with resumable owner-scoped reset verification"
+    ],
+    "Removed": [
+      "Explore, Pages, user Databases, templates, saved filters, and Filters & labels",
+      "Pre-reset workspace data and incompatible backup readers; sign-in identity is retained"
     ]
   }
 }

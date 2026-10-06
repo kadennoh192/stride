@@ -32,7 +32,11 @@ void test('AI sends only opted-in task/project context and validates before retu
           data: { title: 'Selected project', sections: ['Drafts'] },
         },
         { id: 'task-a', kind: 'task', data: taskData('Selected task') },
-        { id: 'page-a', kind: 'page', data: { title: 'PRIVATE PAGE CONTENT' } },
+        {
+          id: 'page-a',
+          kind: 'folder',
+          data: { title: 'PRIVATE PAGE CONTENT' },
+        },
       ],
       'America/Toronto',
     );

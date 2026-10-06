@@ -1,4 +1,5 @@
 'use client';
+import { generationHeaders } from '@/lib/stride/reset-generation';
 import { countLabel, stringValue } from '@/lib/stride/types';
 
 import { useEffect, useState } from 'react';
@@ -34,6 +35,9 @@ import {
 } from '@/lib/stride/backup';
 import { downloadBlob } from '@/lib/stride/files';
 import { Field, Select, ReorderButtons } from '../forms';
+import { Activity } from './productivity';
+import { taskLayouts } from '@/lib/stride/notes';
+import type { TaskLayout } from '@/lib/stride/types';
 import { Modal } from '../primitives';
 import { currentRelease, useUpdates } from '@/lib/stride/updates';
 import releases from '@/releases.json';
@@ -45,9 +49,7 @@ const navigation = [
   'upcoming',
   'tasks',
   'calendar',
-  'filters',
-  'pages',
-  'databases',
+  'notes',
   'habits',
   'focus',
   'school',
@@ -57,9 +59,7 @@ const navigation = [
   'matrix',
   'countdowns',
   'insights',
-  'explore',
   'archive',
-  'history',
 ];
 const customColors = [
   ['workspaceBackground', 'Workspace background'],
@@ -87,10 +87,14 @@ function contrastRatio(left: string, right: string) {
   const values = [luminance(left), luminance(right)].sort((a, b) => b - a);
   return (values[0] + 0.05) / (values[1] + 0.05);
 }
-export default function Settings() {
+export default function Settings({
+  initialTab = 'appearance',
+}: {
+  initialTab?: string;
+}) {
   const store = useStride();
   const updates = useUpdates();
-  const [tab, setTab] = useState('appearance');
+  const [tab, setTab] = useState(initialTab);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
@@ -203,7 +207,10 @@ export default function Settings() {
         if (subscription) {
           const removal = await fetch('/api/push', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              ...generationHeaders,
+            },
             body: JSON.stringify({
               action: 'remove',
               subscription: subscription.toJSON(),
@@ -214,7 +221,7 @@ export default function Settings() {
       }
       const response = await fetch('/api/auth', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...generationHeaders },
         body: JSON.stringify({ action: actionName, email, password }),
       });
       const data = (await response.json()) as {
@@ -264,7 +271,7 @@ export default function Settings() {
         }));
       const r = await fetch('/api/push', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...generationHeaders },
         body: JSON.stringify({
           action: test ? 'test' : 'subscribe',
           subscription: subscription.toJSON(),
@@ -298,6 +305,8 @@ export default function Settings() {
           {[
             ['appearance', 'Appearance', Palette],
             ['navigation', 'Navigation', SettingsIcon],
+            ['layouts', 'Task layouts', SettingsIcon],
+            ['activity', 'Activity', SettingsIcon],
             ['planning', 'Planning & dashboard', SettingsIcon],
             ['account', 'Account & sync', Cloud],
             ['notifications', 'Notifications', Bell],
@@ -328,6 +337,60 @@ export default function Settings() {
           })}
         </nav>
         <section className="settings-content">
+          {tab === 'activity' && <Activity />}
+          {tab === 'layouts' && (
+            <>
+              <h2>Task layouts</h2>
+              <p className="muted">
+                Choose a default, then customize individual task screens when
+                useful.
+              </p>
+              <Field label="Default task layout">
+                <Select
+                  value={store.settings.taskLayout}
+                  onChange={(value) =>
+                    void store.setSettings({ taskLayout: value as TaskLayout })
+                  }
+                  options={taskLayouts.map((value) => ({
+                    value,
+                    label: value[0].toUpperCase() + value.slice(1),
+                  }))}
+                />
+              </Field>
+              {[
+                ['inbox', 'Inbox'],
+                ['upcoming', 'Upcoming'],
+                ['tasks', 'All tasks'],
+                ['archive', 'Completed tasks'],
+                ...store.entities
+                  .filter((entity) => entity.kind === 'project')
+                  .map((entity) => [
+                    `project/${entity.id}`,
+                    stringValue(entity.data.title),
+                  ]),
+              ].map(([route, label]) => (
+                <Field label={label} key={route}>
+                  <Select
+                    value={store.settings.taskViews[route] || ''}
+                    onChange={(value) => {
+                      const taskViews = { ...store.settings.taskViews };
+                      if (value) taskViews[route] = value as TaskLayout;
+                      else delete taskViews[route];
+                      void store.setSettings({ taskViews });
+                    }}
+                    options={[
+                      { value: '', label: 'Use default' },
+                      ...taskLayouts.map((value) => ({
+                        value,
+                        label: value[0].toUpperCase() + value.slice(1),
+                      })),
+                    ]}
+                  />
+                </Field>
+              ))}
+            </>
+          )}
+
           {tab === 'planning' && (
             <>
               <h2>Planning & dashboard</h2>
@@ -819,8 +882,7 @@ export default function Settings() {
                 Show the Today panel on large screens
               </label>
               <p className="muted">
-                Project backgrounds and page covers are set inside their own
-                settings.
+                Project backgrounds are set inside project settings.
               </p>
             </>
           )}
@@ -898,7 +960,7 @@ export default function Settings() {
                   </p>
                 </div>
               </div>
-              {!store.account.configured && (
+              {!store.account.configured && !store.account.error && (
                 <div className="inset-panel">
                   <h3>Cloud accounts are not configured</h3>
                   <p className="muted">
@@ -907,6 +969,17 @@ export default function Settings() {
                     this device. Export a backup before changing browsers or
                     clearing browser data.
                   </p>
+                </div>
+              )}
+              {store.account.error && (
+                <div className="notice" role="alert">
+                  <p>{store.account.error}</p>
+                  <button
+                    className="secondary-button"
+                    onClick={() => void store.refreshAccount()}
+                  >
+                    Retry account connection
+                  </button>
                 </div>
               )}
               {store.account.user ? (
@@ -1173,7 +1246,10 @@ export default function Settings() {
                       if (subscription) {
                         await fetch('/api/push', {
                           method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
+                          headers: {
+                            'Content-Type': 'application/json',
+                            ...generationHeaders,
+                          },
                           body: JSON.stringify({
                             action: 'remove',
                             subscription: subscription.toJSON(),
@@ -1300,7 +1376,10 @@ export default function Settings() {
                     void action(async () => {
                       const response = await fetch('/api/watch/pair', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: {
+                          'Content-Type': 'application/json',
+                          ...generationHeaders,
+                        },
                         body: JSON.stringify({ action: 'createLink' }),
                       });
                       const data = (await response.json()) as {
@@ -1331,7 +1410,10 @@ export default function Settings() {
                     void action(async () => {
                       const response = await fetch('/api/watch/pair', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: {
+                          'Content-Type': 'application/json',
+                          ...generationHeaders,
+                        },
                         body: JSON.stringify({ action: 'create' }),
                       });
                       const data = (await response.json()) as {
@@ -1360,7 +1442,10 @@ export default function Settings() {
                     void action(async () => {
                       const response = await fetch('/api/watch/pair', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: {
+                          'Content-Type': 'application/json',
+                          ...generationHeaders,
+                        },
                         body: JSON.stringify({ action: 'revoke' }),
                       });
                       const data = (await response.json()) as {
@@ -1468,11 +1553,11 @@ export default function Settings() {
             <>
               <h2>Backup & restore</h2>
               <p className="muted">
-                Export your tasks, pages, databases, settings, history,
-                templates and attachments. Restoring replaces this workspace and
-                queues the restored records for sync. The .stride file keeps
-                large attachments out of memory; compact codes are also offered
-                when the workspace is small enough. Credentials and notification
+                Export your tasks, notes, folders, settings, history, and
+                attachments. Restoring replaces this workspace and queues the
+                restored records for sync. The .stride file keeps large
+                attachments out of memory; compact codes are also offered when
+                the workspace is small enough. Credentials and notification
                 subscriptions are excluded.
               </p>
               <div className="form-actions">

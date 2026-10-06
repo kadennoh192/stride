@@ -5,6 +5,8 @@ import {
   type PushSubscription as WebSubscription,
 } from '@block65/webcrypto-web-push';
 import { db } from './bindings';
+import { workspaceReady } from './reset';
+import { RESET_GENERATION } from '../stride/reset-generation';
 import {
   dateKey,
   shiftDate,
@@ -66,6 +68,7 @@ export async function hash(text: string) {
     .join('');
 }
 export async function scheduleEntity(owner: string, id: string) {
+  if (!(await workspaceReady(owner))) return;
   const entity = await serverEntity(owner, id);
   if (
     !entity ||
@@ -220,7 +223,7 @@ export async function scheduleEntity(owner: string, id: string) {
     statements.push(
       database
         .prepare(
-          'INSERT INTO reminder_jobs (id,owner,entity,due,original_due,repeat_minutes) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING',
+          "INSERT INTO reminder_jobs (id,owner,entity,due,original_due,repeat_minutes) SELECT ?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM workspace_resets WHERE owner=? AND generation=? AND phase='complete') ON CONFLICT(id) DO NOTHING",
         )
         .bind(
           job.id,
@@ -231,6 +234,8 @@ export async function scheduleEntity(owner: string, id: string) {
           entity.kind === 'task'
             ? Math.max(0, Number(entity.data.repeatMinutes) || 0)
             : 0,
+          owner,
+          RESET_GENERATION,
         ),
     );
   if (statements.length) await database.batch(statements);

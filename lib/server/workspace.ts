@@ -1,3 +1,4 @@
+import { workspaceReady } from './reset';
 import { flushScheduleQueue } from './reminders';
 import { db } from './bindings';
 import {
@@ -44,6 +45,8 @@ export async function saveCloudEdits(
   edits: Edit[],
   label: string,
 ): Promise<Change[]> {
+  if (!(await workspaceReady(owner)))
+    throw new Error('Workspace reset is required.');
   const state = await loadCloudWorkspace(owner);
   applyEdits(state, edits, label);
   const database = db();

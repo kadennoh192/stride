@@ -1,4 +1,6 @@
-import { databaseLayouts, stringValue } from './types';
+import { noteText } from './notes';
+import { attachmentId } from './attachment-model';
+import { stringValue } from './types';
 import type {
   Change,
   Field,
@@ -6,28 +8,20 @@ import type {
   Entity,
   EntityCandidate,
   Conflict,
-  Property,
-  DatabaseRow,
 } from './types';
-import { validZone, validDate, safeURL, embedURL } from './domain';
+import { validZone, validDate, safeURL } from './domain';
 import { validAlarmSchedule } from './alarms';
 export const kinds: Kind[] = [
   'task',
   'project',
-  'page',
-  'block',
-  'database',
-  'row',
+  'note',
+  'folder',
   'habit',
   'habitLog',
   'session',
   'countdown',
   'settings',
-  'view',
-  'comment',
   'completion',
-  'template',
-  'favorite',
   'fileTombstone',
   'course',
   'assignment',
@@ -166,16 +160,7 @@ export function validateEntity(e: EntityCandidate) {
       );
   }
   if (
-    [
-      'project',
-      'page',
-      'database',
-      'habit',
-      'countdown',
-      'view',
-      'template',
-      'favorite',
-    ].includes(e.kind) &&
+    ['project', 'habit', 'countdown'].includes(e.kind) &&
     (typeof e.data.title !== 'string' ||
       !e.data.title.trim() ||
       stringValue(e.data.title).length > 1000)
@@ -217,43 +202,6 @@ function optional(
   if (data[key] !== undefined && data[key] !== null && !check(data[key]))
     invalid(`Invalid ${key}`);
 }
-const blocks = [
-  'paragraph',
-  'heading1',
-  'heading2',
-  'heading3',
-  'bullet',
-  'number',
-  'check',
-  'toggle',
-  'quote',
-  'callout',
-  'divider',
-  'code',
-  'table',
-  'image',
-  'file',
-  'link',
-  'embed',
-  'database',
-];
-const properties = [
-  'text',
-  'number',
-  'select',
-  'multi-select',
-  'status',
-  'date',
-  'checkbox',
-  'url',
-  'email',
-  'phone',
-  'files',
-  'person',
-  'relation',
-  'rollup',
-  'formula',
-];
 const navigation = [
   'inbox',
   'today',
@@ -261,17 +209,13 @@ const navigation = [
   'upcoming',
   'tasks',
   'calendar',
-  'filters',
-  'pages',
-  'databases',
+  'notes',
   'habits',
   'focus',
   'matrix',
   'countdowns',
   'insights',
-  'explore',
   'archive',
-  'history',
   'school',
   'alarms',
   'shower',
@@ -461,103 +405,28 @@ function validateShape(e: EntityCandidate) {
       optional(d, 'color', hexColor);
       optional(d, 'background', (v) => v === '' || hexColor(v));
       break;
-    case 'page':
-      optional(d, 'parent', (v) => typeof v === 'string' && (!v || id.test(v)));
-      optional(d, 'icon', (v) => typeof v === 'string' && v.length <= 16);
-      optional(d, 'cover', (v) => v === '' || hexColor(v));
-      break;
-    case 'block':
+    case 'note':
       if (
-        typeof d.page !== 'string' ||
-        !id.test(d.page) ||
-        !blocks.includes(String(d.type)) ||
-        !finite(d.order, -1e12, 1e12)
+        typeof d.title !== 'string' ||
+        d.title.length > 1000 ||
+        !validNoteDocument(d.document) ||
+        typeof d.text !== 'string' ||
+        d.text !== noteText(d.document) ||
+        typeof d.folder !== 'string' ||
+        (d.folder !== '' && !id.test(d.folder)) ||
+        typeof d.pinned !== 'boolean' ||
+        !instant(d.createdAt) ||
+        !instant(d.updatedAt) ||
+        String(d.updatedAt) < String(d.createdAt)
       )
-        invalid('Invalid page block');
-      optional(d, 'text', (v) => typeof v === 'string');
-      optional(d, 'rich', object);
-      optional(d, 'checked', (v) => typeof v === 'boolean');
-      optional(d, 'file', (v) => typeof v === 'string' && (!v || id.test(v)));
-      optional(d, 'url', (v) => typeof v === 'string');
-      if (
-        d.url &&
-        ((d.type === 'embed' && !embedURL(stringValue(d.url))) ||
-          (d.type !== 'embed' && !safeURL(stringValue(d.url))))
-      )
-        invalid('Invalid or unsafe block URL');
+        invalid('Invalid note document, folder, or timestamps');
       break;
-    case 'database': {
-      if (!Array.isArray(d.properties)) invalid('Invalid database properties');
-      const seen = new Set<string>();
-      const names = new Set<string>();
-      for (const p of d.properties as unknown[]) {
-        if (
-          !object(p) ||
-          typeof p.id !== 'string' ||
-          !id.test(p.id) ||
-          p.id.length > 95 ||
-          seen.has(p.id) ||
-          typeof p.name !== 'string' ||
-          !p.name.trim() ||
-          names.has(p.name) ||
-          !properties.includes(String(p.type)) ||
-          !strings(p.options) ||
-          new Set(p.options).size !== p.options.length ||
-          p.options.some((option) => !option.trim() || option.length > 500)
-        )
-          invalid('Invalid or duplicate database property');
-        optional(
-          p,
-          'target',
-          (v) => typeof v === 'string' && (!v || id.test(v)),
-        );
-        optional(
-          p,
-          'expression',
-          (v) => typeof v === 'string' && v.length <= 10000,
-        );
-        for (const key of ['relation', 'property'])
-          optional(p, key, (v) => typeof v === 'string' && (!v || id.test(v)));
-        optional(p, 'aggregate', (v) =>
-          ['count', 'sum', 'average', 'min', 'max'].includes(String(v)),
-        );
-        seen.add((p as { id: string }).id);
-        names.add((p as { name: string }).name);
-      }
-      const byId = new Map(
-        (d.properties as Property[]).map((property) => [property.id, property]),
-      );
-      for (const property of d.properties as Property[]) {
-        if (
-          property.type !== 'relation' &&
-          property.target !== undefined &&
-          property.target !== ''
-        )
-          invalid('Only relation properties can declare a target');
-        if (
-          property.type === 'rollup' &&
-          property.relation &&
-          byId.get(property.relation)?.type !== 'relation'
-        )
-          invalid('A rollup must use a relation property');
-      }
-      optional(
-        d,
-        'dateProperty',
-        (v) =>
-          typeof v === 'string' &&
-          (!v || (seen.has(v) && byId.get(v)?.type === 'date')),
-      );
-      break;
-    }
-    case 'row':
+    case 'folder':
       if (
-        typeof d.database !== 'string' ||
-        !id.test(d.database) ||
-        typeof d.title !== 'string'
+        typeof d.parent !== 'string' ||
+        (d.parent !== '' && !id.test(d.parent))
       )
-        invalid('Invalid database row');
-      optional(d, 'values', object);
+        invalid('Invalid folder parent');
       break;
     case 'habit':
       if (
@@ -612,63 +481,14 @@ function validateShape(e: EntityCandidate) {
         (v) => typeof v === 'string' && (!v || validZone(v)),
       );
       break;
-    case 'comment':
-      if (
-        typeof d.target !== 'string' ||
-        !id.test(d.target) ||
-        typeof d.text !== 'string' ||
-        !d.text.trim() ||
-        !instant(d.at)
-      )
-        invalid('Invalid page comment');
-      break;
-    case 'view':
-      optional(d, 'database', (v) => typeof v === 'string' && id.test(v));
-      optional(d, 'layout', (v) =>
-        databaseLayouts.includes(v as (typeof databaseLayouts)[number]),
-      );
-      for (const key of ['query', 'filterValue'])
-        optional(d, key, (v) => typeof v === 'string' && v.length <= 10000);
-      for (const key of ['filterProp', 'group'])
-        optional(d, key, (v) => typeof v === 'string' && (!v || id.test(v)));
-      optional(
-        d,
-        'sort',
-        (v) => typeof v === 'string' && (v === 'title' || id.test(v)),
-      );
-      optional(d, 'descending', (v) => typeof v === 'boolean');
-      for (const key of ['hidden', 'propertyOrder'])
-        optional(
-          d,
-          key,
-          (v) =>
-            strings(v) &&
-            new Set(v).size === v.length &&
-            v.every((property) => id.test(property)),
-        );
-      optional(d, 'filter', object);
-      break;
-    case 'template':
-      if (!['page', 'row'].includes(String(d.type)))
-        invalid('Invalid template type');
-      optional(d, 'database', (v) => typeof v === 'string' && id.test(v));
-      optional(d, 'pageTemplate', object);
-      optional(
-        d,
-        'blocks',
-        (v) => Array.isArray(v) && v.every((block) => object(block)),
-      );
-      optional(d, 'row', object);
-      break;
-    case 'favorite':
-      if (!finite(d.tip, 0, 10000) || !Number.isInteger(d.tip))
-        invalid('Invalid favorite');
-      break;
     case 'fileTombstone':
       if (typeof d.attachment !== 'string' || !id.test(d.attachment))
         invalid('Invalid attachment removal marker');
       break;
     case 'settings':
+      optional(d, 'taskLayout', (v) =>
+        ['list', 'board', 'table', 'timeline'].includes(String(v)),
+      );
       optional(d, 'plannerSetup', (v) => typeof v === 'boolean');
       optional(
         d,
@@ -872,100 +692,6 @@ function validateShape(e: EntityCandidate) {
   }
 }
 
-function rowValues(row: DatabaseRow) {
-  const values = { ...row.data.values };
-  for (const [key, value] of Object.entries(row.data))
-    if (key.startsWith('cell_')) values[key.slice(5)] = value;
-  return values;
-}
-
-function validCell(
-  property: Property,
-  value: unknown,
-  lookup: (id: string) => Entity | undefined,
-) {
-  if (value === undefined || value === null || value === '') return true;
-  switch (property.type) {
-    case 'text':
-      return typeof value === 'string';
-    case 'number':
-      return typeof value === 'number' && Number.isFinite(value);
-    case 'select':
-    case 'status':
-      return typeof value === 'string' && property.options.includes(value);
-    case 'multi-select':
-      return (
-        strings(value) &&
-        new Set(value).size === value.length &&
-        value.every((option) => property.options.includes(option))
-      );
-    case 'date':
-      return typeof value === 'string' && validDate(value);
-    case 'checkbox':
-      return typeof value === 'boolean';
-    case 'url':
-      return typeof value === 'string' && !!safeURL(value);
-    case 'email':
-      return (
-        typeof value === 'string' &&
-        value.length <= 320 &&
-        /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
-      );
-    case 'phone':
-      return typeof value === 'string' && value.length <= 100;
-    case 'files':
-      return (
-        Array.isArray(value) &&
-        value.length <= 100 &&
-        value.every(
-          (file) =>
-            object(file) &&
-            typeof file.id === 'string' &&
-            id.test(file.id) &&
-            typeof file.name === 'string' &&
-            file.name.length <= 1024,
-        )
-      );
-    case 'person':
-      return typeof value === 'string' && id.test(value);
-    case 'relation':
-      return (
-        strings(value) &&
-        new Set(value).size === value.length &&
-        value.every((reference) => {
-          if (!id.test(reference)) return false;
-          const target = lookup(reference);
-          if (!target) return false;
-          if (!property.target) return true;
-          if (['task', 'project', 'page'].includes(property.target))
-            return target.kind === property.target;
-          return (
-            target.kind === 'row' && target.data.database === property.target
-          );
-        })
-      );
-    case 'rollup':
-    case 'formula':
-      return true;
-  }
-}
-
-function validateRowSchema(
-  row: DatabaseRow,
-  lookup: (id: string) => Entity | undefined,
-) {
-  const database = lookup(row.data.database);
-  if (!database || database.deleted) return;
-  if (database.kind !== 'database')
-    invalid('Database rows must reference a database');
-  const values = rowValues(row);
-  for (const property of database.data.properties as Property[])
-    if (
-      Object.hasOwn(values, property.id) &&
-      !validCell(property, values[property.id], lookup)
-    )
-      invalid(`Invalid value for database property: ${property.name}`);
-}
 export function validConflict(v: unknown): v is Conflict {
   if (
     !object(v) ||
@@ -991,6 +717,11 @@ export function validateGraph(
   lookup: (id: string) => Entity | undefined,
 ) {
   for (const entity of edited) {
+    if (!entity.deleted && entity.kind === 'note' && entity.data.folder) {
+      const folder = lookup(entity.data.folder);
+      if (!folder || folder.deleted || folder.kind !== 'folder')
+        invalid('Choose an existing note folder.');
+    }
     if (entity.deleted || entity.kind !== 'assignment') continue;
     const course = lookup(entity.data.course);
     if (course && course.kind !== 'course')
@@ -1004,15 +735,12 @@ export function validateGraph(
     )
       invalid('Choose a category from this course.');
   }
-  for (const entity of edited)
-    if (entity.kind === 'row' && !entity.deleted)
-      validateRowSchema(entity, lookup);
   for (const edge of ['parent', 'dependencies'] as const) {
     const done = new Set<string>();
     for (const root of edited) {
       if (
         root.deleted ||
-        !['task', 'page'].includes(root.kind) ||
+        !['task', 'folder'].includes(root.kind) ||
         done.has(root.id)
       )
         continue;
@@ -1058,4 +786,206 @@ export function validateGraph(
       }
     }
   }
+}
+
+/** Only the continuous editor's schema is accepted. Image/file nodes contain
+ * durable IDs; pasted blob URLs and arbitrary HTML attributes cannot persist. */
+export function validNoteDocument(
+  value: unknown,
+): value is import('./types').NoteDocument {
+  let count = 0;
+  const blocks = [
+    'paragraph',
+    'heading',
+    'bulletList',
+    'orderedList',
+    'taskList',
+    'horizontalRule',
+    'blockquote',
+    'codeBlock',
+    'table',
+    'attachment',
+  ];
+  const attrs: Record<string, string[]> = {
+    heading: ['level'],
+    orderedList: ['start'],
+    taskItem: ['checked'],
+    tableCell: ['colspan', 'rowspan', 'colwidth', 'align'],
+    tableHeader: ['colspan', 'rowspan', 'colwidth', 'align'],
+    codeBlock: ['language'],
+    attachment: ['id', 'name', 'image'],
+  };
+  const visit = (node: unknown, depth: number): boolean => {
+    if (
+      !object(node) ||
+      depth > 20 ||
+      ++count > 10000 ||
+      typeof node.type !== 'string' ||
+      !safeValue(node)
+    )
+      return false;
+    if (
+      Object.keys(node).some(
+        (key) => !['type', 'attrs', 'content', 'marks', 'text'].includes(key),
+      )
+    )
+      return false;
+    const type = node.type;
+    if (
+      ![
+        'doc',
+        'text',
+        'hardBreak',
+        'listItem',
+        'taskItem',
+        'tableRow',
+        'tableHeader',
+        'tableCell',
+        ...blocks,
+      ].includes(type)
+    )
+      return false;
+    if (
+      type === 'text'
+        ? typeof node.text !== 'string' || !node.text
+        : node.text !== undefined
+    )
+      return false;
+    if (
+      node.attrs !== undefined &&
+      (!object(node.attrs) ||
+        Object.keys(node.attrs).some(
+          (key) => !(attrs[type] || []).includes(key),
+        ))
+    )
+      return false;
+    const attributes = object(node.attrs) ? node.attrs : {};
+    if (type === 'heading' && ![1, 2, 3].includes(Number(attributes.level)))
+      return false;
+    if (
+      type === 'orderedList' &&
+      attributes.start !== undefined &&
+      (!Number.isInteger(attributes.start) ||
+        !finite(attributes.start, 1, 100000))
+    )
+      return false;
+    if (type === 'taskItem' && typeof attributes.checked !== 'boolean')
+      return false;
+    if (
+      type === 'codeBlock' &&
+      attributes.language !== undefined &&
+      attributes.language !== null &&
+      typeof attributes.language !== 'string'
+    )
+      return false;
+    if (
+      type === 'attachment' &&
+      (typeof attributes.id !== 'string' ||
+        !attachmentId.test(attributes.id) ||
+        typeof attributes.name !== 'string' ||
+        attributes.name.length > 1024 ||
+        typeof attributes.image !== 'boolean')
+    )
+      return false;
+    if (type === 'tableCell' || type === 'tableHeader') {
+      if (
+        attributes.align !== undefined &&
+        attributes.align !== null &&
+        (typeof attributes.align !== 'string' ||
+          !['left', 'right', 'center', 'justify'].includes(attributes.align))
+      )
+        return false;
+      for (const key of ['colspan', 'rowspan'])
+        if (
+          attributes[key] !== undefined &&
+          (!Number.isInteger(attributes[key]) ||
+            !finite(attributes[key], 1, 1000))
+        )
+          return false;
+      if (
+        attributes.colwidth !== undefined &&
+        attributes.colwidth !== null &&
+        (!Array.isArray(attributes.colwidth) ||
+          !attributes.colwidth.every(
+            (width) => Number.isInteger(width) && finite(width, 1, 10000),
+          ))
+      )
+        return false;
+    }
+    if (
+      node.marks !== undefined &&
+      (!['text', 'hardBreak'].includes(type) ||
+        !Array.isArray(node.marks) ||
+        !node.marks.every((mark) => {
+          if (
+            !object(mark) ||
+            Object.keys(mark).some((key) => !['type', 'attrs'].includes(key)) ||
+            !['bold', 'italic', 'strike', 'underline', 'code', 'link'].includes(
+              String(mark.type),
+            )
+          )
+            return false;
+          if (mark.type !== 'link')
+            return (
+              mark.attrs === undefined ||
+              (object(mark.attrs) && Object.keys(mark.attrs).length === 0)
+            );
+          return (
+            object(mark.attrs) &&
+            Object.keys(mark.attrs).every((key) =>
+              ['href', 'target', 'rel', 'class'].includes(key),
+            ) &&
+            typeof mark.attrs.href === 'string' &&
+            !!safeURL(mark.attrs.href)
+          );
+        }))
+    )
+      return false;
+    if (node.content !== undefined && !Array.isArray(node.content))
+      return false;
+    const content = (node.content || []) as Record<string, unknown>[];
+    if (['text', 'hardBreak', 'horizontalRule', 'attachment'].includes(type))
+      return node.content === undefined;
+    const allowed =
+      type === 'doc' ||
+      type === 'blockquote' ||
+      type === 'tableHeader' ||
+      type === 'tableCell'
+        ? blocks
+        : ['paragraph', 'heading'].includes(type)
+          ? ['text', 'hardBreak']
+          : type === 'codeBlock'
+            ? ['text']
+            : type === 'bulletList' || type === 'orderedList'
+              ? ['listItem']
+              : type === 'taskList'
+                ? ['taskItem']
+                : type === 'table'
+                  ? ['tableRow']
+                  : type === 'tableRow'
+                    ? ['tableCell', 'tableHeader']
+                    : blocks;
+    if (
+      !['paragraph', 'heading', 'codeBlock'].includes(type) &&
+      !content.length
+    )
+      return false;
+    if (
+      ['listItem', 'taskItem'].includes(type) &&
+      content[0]?.type !== 'paragraph'
+    )
+      return false;
+    return content.every(
+      (child) =>
+        object(child) &&
+        allowed.includes(String(child.type)) &&
+        visit(child, depth + 1),
+    );
+  };
+  return (
+    object(value) &&
+    value.type === 'doc' &&
+    Array.isArray(value.content) &&
+    visit(value, 0)
+  );
 }

@@ -7,9 +7,7 @@ import {
   zonedInstant,
   validDate,
   safeURL,
-  embedURL,
 } from '../lib/stride/domain';
-import { formula } from '../lib/stride/formula';
 import { habitLogId } from '../lib/stride/habits';
 const task = (extra: Record<string, unknown>): Task => ({
   id: 'task-1',
@@ -147,45 +145,4 @@ void test('timezone conversion covers DST gaps and ambiguous times', () => {
 void test('dates and links reject invalid or executable values', () => {
   assert.equal(validDate('2026-02-30'), false);
   assert.equal(safeURL('javascript:alert(1)'), '');
-  assert.equal(embedURL('https://evil.example/embed'), '');
-  assert.ok(
-    embedURL('https://www.youtube.com/watch?v=dQw4w9WgXcQ').startsWith(
-      'https://www.youtube-nocookie.com/',
-    ),
-  );
-});
-void test('formula interpreter supports expressions without code execution', () => {
-  assert.equal(
-    formula('prop("Hours") * 60 + 5', () => 2),
-    125,
-  );
-  assert.equal(
-    formula('if(2 > 1, upper("yes"), "no")', () => null),
-    'YES',
-  );
-  assert.equal(
-    formula('dateDiff("2026-09-05", "2026-09-01")', () => null),
-    4,
-  );
-  assert.equal(
-    formula('sum(1,2,3) / 2', () => null),
-    3,
-  );
-  assert.throws(() => formula('globalThis.process.exit()', () => null));
-  assert.throws(() => formula('1 / 0', () => null));
-  assert.throws(() => formula('constructor("alert(1)")', () => null));
-});
-
-void test('formula conditions and boolean operators evaluate only the selected branch', () => {
-  const unread = () => {
-    throw new Error('This branch must not read properties');
-  };
-  assert.equal(formula('if(false, 1 / 0, 1)', unread), 1);
-  assert.equal(
-    formula('if(true, "selected", prop("unused"))', unread),
-    'selected',
-  );
-  assert.equal(formula('false && prop("unused")', unread), false);
-  assert.equal(formula('true || prop("unused")', unread), true);
-  assert.throws(() => formula('if(true, 1 / 0, 1)', unread), /zero/);
 });

@@ -1,4 +1,10 @@
 'use client';
+import { initializeCloudWorkspace } from './reset-client';
+import {
+  generationHeaders,
+  RESET_GENERATION,
+  SYNC_PROTOCOL,
+} from './reset-generation';
 import { finishElapsedTimer, type ActiveTimer } from './timer';
 import { entityFromFields } from './field-index';
 import { stringValue } from './types';
@@ -42,9 +48,11 @@ import {
 } from './storage';
 import { uploadFile } from './upload';
 import { deleteRemoteFile } from './files';
+import { documentAttachments, folderDeletionEdits, noteText } from './notes';
 import { currentAttachmentReferences } from './attachment-references';
 import { completionEdits } from './completion';
 interface Account {
+  error?: string;
   configured: boolean;
   signupAllowed: boolean;
   user: { id: string; email: string } | null;
@@ -75,7 +83,7 @@ interface Store {
     label?: string,
   ) => Promise<void>;
   remove: (e: Entity) => Promise<void>;
-  removeAttachment: (e: EntityOf<'block'>) => Promise<void>;
+  purgeNoteAttachment: (note: EntityOf<'note'>, id: string) => Promise<void>;
   complete: (task: Task) => Promise<void>;
   undo: () => Promise<void>;
   canUndo: boolean;
@@ -138,6 +146,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setOwner(next);
       localStorage.setItem('stride-last-account', next);
     } catch {
+      setAccount((previous) => ({
+        ...previous,
+        error:
+          'The account service could not be reached. Reconnect and retry; your sign-in account is preserved.',
+      }));
       setOwner(
         (previous) =>
           previous || localStorage.getItem('stride-last-account') || 'guest',
@@ -147,6 +160,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const reload = useCallback(async () => {
     if (!owner) return;
     try {
+      await initializeCloudWorkspace(owner);
       const state = await load(owner);
       if (currentOwner.current === owner) {
         loadedOwner.current = owner;
@@ -158,12 +172,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setError(e instanceof Error ? e.message : stringValue(e));
     }
   }, [owner]);
+  useEffect(() => {
+    const saved = (event: Event) => {
+      const { owner: savedOwner, inverse } = (
+        event as CustomEvent<{ owner: string; inverse: Edit[] }>
+      ).detail;
+      if (savedOwner === currentOwner.current) {
+        setUndoEdits(inverse);
+        void reload();
+      }
+      broadcast.current?.postMessage({ owner: savedOwner });
+    };
+    window.addEventListener('stride-note-saved', saved);
+    return () => window.removeEventListener('stride-note-saved', saved);
+  }, [reload]);
   const edit = useCallback(
-    async (edits: Edit[], label = 'Updated workspace') => {
-      if (!owner) throw new Error('Storage is still opening');
+    async (
+      requested: Edit[] | ((state: Snapshot) => Edit[]),
+      label = 'Updated workspace',
+    ) => {
+      if (!owner || loadedOwner.current !== owner)
+        throw new Error('Workspace initialization is still running.');
       try {
         let reverse: Edit[] = [];
         const state = await transact((s) => {
+          const edits =
+            typeof requested === 'function' ? requested(s) : requested;
           reverse = edits.map((e) => {
             const before = entityFromFields(s.fields, e.id);
             return {
@@ -219,6 +253,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setSyncStatus('Syncing…');
     try {
       await fetch('/api/auth', { cache: 'no-store' });
+      await initializeCloudWorkspace(owner);
       let state = await load(owner);
       let again = true;
       let rounds = 0;
@@ -226,9 +261,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const batch = state.outbox.slice(0, 10);
         const response = await fetch('/api/sync', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...generationHeaders },
           body: JSON.stringify({
-            version: 3,
+            version: SYNC_PROTOCOL,
+            generation: RESET_GENERATION,
             owner,
             cursor: state.cursor,
             changes: batch,
@@ -242,6 +278,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const data = (await response.json()) as {
           error?: string;
           version: number;
+          generation: string;
           owner: string;
           fields: import('./types').Field[];
           acknowledged: string[];
@@ -251,7 +288,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         };
         if (!response.ok) throw new Error(data.error || 'Sync unavailable');
         if (
-          data.version !== 3 ||
+          data.version !== SYNC_PROTOCOL ||
+          data.generation !== RESET_GENERATION ||
           data.owner !== owner ||
           !Array.isArray(data.fields) ||
           !Array.isArray(data.acknowledged) ||
@@ -409,7 +447,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       } catch {
         // A malformed hash falls back to the general startup projection.
       }
-      void startupProjection(owner, project)
+      void initializeCloudWorkspace(owner)
+        .then(() => startupProjection(owner, project))
         .then((entities) => {
           if (currentOwner.current === owner && loadedOwner.current !== owner) {
             setStartup({ owner, project, entities });
@@ -693,37 +732,103 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           ),
         remove: async (e) => {
           await edit(
-            [
-              {
-                id: e.id,
-                kind: e.kind,
-                data: { _deleted: true },
-              } as Edit,
-            ],
+            (snapshot) => {
+              const current = entityFromFields(snapshot.fields, e.id);
+              if (!current || current.deleted) return [];
+              const entities = materialize(snapshot.fields);
+              return current.kind === 'folder'
+                ? folderDeletionEdits(current, entities)
+                : current.kind === 'project'
+                  ? [
+                      ...entities
+                        .filter(
+                          (item): item is Task =>
+                            item.kind === 'task' &&
+                            item.data.project === current.id,
+                        )
+                        .map((task) => ({
+                          id: task.id,
+                          kind: 'task' as const,
+                          data: { project: 'inbox', section: '' },
+                        })),
+                      {
+                        id: current.id,
+                        kind: 'project',
+                        data: { _deleted: true },
+                      },
+                    ]
+                  : [
+                      {
+                        id: current.id,
+                        kind: current.kind,
+                        data: { _deleted: true },
+                      } as Edit,
+                    ];
+            },
             `Deleted ${stringValue(e.data.title || e.kind)}`,
           );
           notice('Moved to trash. Undo is available.');
         },
-        removeAttachment: async (block) => {
-          const id = stringValue(block.data.file);
-          if (!id || !fullSnapshot) return;
+        purgeNoteAttachment: async (note, id) => {
+          if (!fullSnapshot) throw new Error('Workspace is still opening');
           if (
-            currentAttachmentReferences(fullSnapshot, `${block.id}:file`).has(
-              id,
-            )
+            currentAttachmentReferences(
+              fullSnapshot,
+              `${note.id}:document`,
+            ).has(id)
           )
             throw new Error(
               'This attachment is also used elsewhere. Remove those references first.',
             );
+          const withoutFile = (
+            node: import('./types').NoteNode,
+          ): import('./types').NoteNode => ({
+            ...node,
+            ...(node.content
+              ? {
+                  content: node.content
+                    .filter(
+                      (child) =>
+                        !(
+                          child.type === 'attachment' && child.attrs?.id === id
+                        ),
+                    )
+                    .map(withoutFile),
+                }
+              : {}),
+          });
           const state = await transact(
-            (snapshot) =>
+            (snapshot) => {
+              if (
+                currentAttachmentReferences(
+                  snapshot,
+                  `${note.id}:document`,
+                ).has(id)
+              )
+                throw new Error(
+                  'This file is shared with another note or assignment.',
+                );
+              const latestNote = entityFromFields(snapshot.fields, note.id);
+              if (
+                latestNote?.kind !== 'note' ||
+                latestNote.deleted ||
+                !documentAttachments(latestNote.data.document).has(id)
+              )
+                throw new Error('The attachment is no longer in this note.');
+              const document = withoutFile(
+                latestNote.data.document,
+              ) as import('./types').NoteDocument;
               applyEdits(
                 snapshot,
                 [
                   {
-                    id: block.id,
-                    kind: 'block',
-                    data: { file: '', name: '' },
+                    id: note.id,
+                    kind: 'note',
+                    data: {
+                      document,
+                      text: noteText(document),
+                      updatedAt: new Date().toISOString(),
+                    },
                   },
                   {
                     id: `filePurge_${id}`,
@@ -732,22 +837,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                   },
                 ],
                 'Permanently removed attachment',
-              ),
+              );
+            },
             owner,
             false,
             undefined,
             [id],
           );
           if (currentOwner.current === owner) {
-            loadedOwner.current = owner;
             setSnapshot(state);
-            setStartup(null);
             setUndoEdits([]);
-            setError('');
             notice(
-              owner === 'guest'
-                ? 'Attachment removed from this device and future backups.'
-                : 'Removal saved on this device. Secure cleanup will finish after cloud sync.',
+              'Attachment removal saved. Cloud cleanup will finish after sync.',
             );
             void sync();
           }

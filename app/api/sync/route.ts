@@ -1,9 +1,12 @@
+import { resetBoundary } from '@/lib/server/reset';
+import { RESET_GENERATION, SYNC_PROTOCOL } from '@/lib/stride/reset-generation';
 import { flushScheduleQueue } from '@/lib/server/reminders';
 import { authorize } from '@/lib/server/auth';
 import { db, sameOrigin } from '@/lib/server/bindings';
 import {
   validChange,
   validateEntity,
+  validateGraph,
   ValidationError,
 } from '@/lib/stride/validation';
 import { materialize, mergeFields, blank } from '@/lib/stride/storage';
@@ -15,6 +18,8 @@ export async function POST(request: Request) {
   if (user instanceof Response) return user;
   if (!user)
     return Response.json({ error: 'Sign in to sync' }, { status: 401 });
+  const boundary = await resetBoundary(request, user.id);
+  if (boundary) return boundary;
   try {
     if (Number(request.headers.get('content-length')) > 2000000)
       return Response.json({ error: 'Sync batch too large' }, { status: 413 });
@@ -23,7 +28,17 @@ export async function POST(request: Request) {
       return Response.json({ error: 'Sync batch too large' }, { status: 413 });
     const input = JSON.parse(text);
     if (
-      ![2, 3].includes(input.version) ||
+      input.version !== SYNC_PROTOCOL ||
+      input.generation !== RESET_GENERATION
+    )
+      return Response.json(
+        {
+          error: 'This workspace requires the current version of Stride.',
+          upgradeRequired: true,
+        },
+        { status: 426, headers: { 'Cache-Control': 'no-store' } },
+      );
+    if (
       !Array.isArray(input.changes) ||
       input.changes.length > 10 ||
       !input.changes.every(validChange) ||
@@ -37,37 +52,6 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     const database = db();
-    if (input.version === 2) {
-      const newer = await database
-        .prepare(
-          "SELECT kind FROM fields WHERE owner=? AND kind IN ('course','assignment','alarm','showerSession','checkIn','streakDay') LIMIT 1",
-        )
-        .bind(user.id)
-        .first();
-      if (
-        newer ||
-        (input.changes as Change[]).some((change) =>
-          change.fields.some((field) =>
-            [
-              'course',
-              'assignment',
-              'alarm',
-              'showerSession',
-              'checkIn',
-              'streakDay',
-            ].includes(field.kind),
-          ),
-        )
-      )
-        return Response.json(
-          {
-            error:
-              'This workspace requires a newer version of Stride before syncing.',
-            upgradeRequired: true,
-          },
-          { status: 426, headers: { 'Cache-Control': 'no-store' } },
-        );
-    }
     for (const change of input.changes as Change[]) {
       const seen = await database
         .prepare('SELECT id FROM dedup WHERE owner = ? AND id = ?')
@@ -86,33 +70,33 @@ export async function POST(request: Request) {
         continue;
       }
       const entities = [...new Set(change.fields.map((f) => f.entity))];
+      const stored = await database
+        .prepare('SELECT entity,kind,key,value,stamp FROM fields WHERE owner=?')
+        .bind(user.id)
+        .all<{
+          entity: string;
+          kind: Field['kind'];
+          key: string;
+          value: string;
+          stamp: string;
+        }>();
+      const state = blank(user.id);
+      mergeFields(
+        state,
+        stored.results.map((field) => ({
+          ...field,
+          value: JSON.parse(field.value),
+        })),
+        false,
+      );
+      mergeFields(state, change.fields, false);
+      const records = materialize(state.fields, true);
+      const lookup = new Map(records.map((record) => [record.id, record]));
       for (const entity of entities) {
-        const old = await database
-          .prepare(
-            'SELECT entity,kind,key,value,stamp FROM fields WHERE owner=? AND entity=?',
-          )
-          .bind(user.id, entity)
-          .all<{
-            entity: string;
-            kind: Field['kind'];
-            key: string;
-            value: string;
-            stamp: string;
-          }>();
-        const state = blank(user.id);
-        mergeFields(
-          state,
-          old.results.map((f) => ({ ...f, value: JSON.parse(f.value) })),
-          false,
-        );
-        mergeFields(
-          state,
-          change.fields.filter((f) => f.entity === entity),
-          false,
-        );
-        for (const record of materialize(state.fields, true))
-          validateEntity(record);
+        const record = lookup.get(entity);
+        if (record) validateEntity(record);
       }
+      validateGraph(records, (id) => lookup.get(id));
       const statements = change.fields.map((f) =>
         database
           .prepare(
@@ -157,32 +141,10 @@ export async function POST(request: Request) {
       .bind(user.id, input.cursor)
       .all<{ seq: number; payload: string }>();
     const history = result.results.map((r) => JSON.parse(r.payload) as Change);
-    if (
-      input.version === 2 &&
-      history.some((change) =>
-        change.fields.some((field) =>
-          [
-            'course',
-            'assignment',
-            'alarm',
-            'showerSession',
-            'checkIn',
-            'streakDay',
-          ].includes(field.kind),
-        ),
-      )
-    )
-      return Response.json(
-        {
-          error:
-            'This workspace requires a newer version of Stride before syncing.',
-          upgradeRequired: true,
-        },
-        { status: 426, headers: { 'Cache-Control': 'no-store' } },
-      );
     return Response.json(
       {
-        version: input.version,
+        version: SYNC_PROTOCOL,
+        generation: RESET_GENERATION,
         owner: user.id,
         acknowledged: input.changes.map((c: Change) => c.id),
         fields: history.flatMap((c) => c.fields),

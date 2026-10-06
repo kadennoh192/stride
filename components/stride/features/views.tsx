@@ -11,6 +11,8 @@ import {
   type Assignment,
 } from '@/lib/stride/types';
 import { Select } from '../forms';
+import { TaskActionSurface } from '../task-actions';
+import { CoreItemActionSurface } from '../core-item-actions';
 import { Empty } from '../primitives';
 const modes = [
   'year',
@@ -117,33 +119,59 @@ export function CalendarView({
     }
     return map;
   }, [visible, assignments, showCompleted, store.settings.timezone]);
-  const plannedEvent = (item: Task | Assignment) => (
-    <button
-      className="calendar-task planned-event"
-      key={`planned-${item.id}`}
-      onClick={() =>
-        item.kind === 'task'
-          ? onEdit(item)
-          : location.assign(`#assignment/${item.id}`)
-      }
-    >
-      ◷{' '}
-      {new Date(item.data.plannedStart!).toLocaleTimeString([], {
-        hour: 'numeric',
-        minute: '2-digit',
-      })}{' '}
-      {item.data.title} · planned
-    </button>
-  );
+  const plannedEvent = (item: Task | Assignment) => {
+    const open = () =>
+      item.kind === 'task'
+        ? onEdit(item)
+        : location.assign(`#assignment/${item.id}`);
+    const row = (menu: React.ReactNode) => (
+      <div className="calendar-task planned-event">
+        <button onClick={open}>
+          ◷{' '}
+          {new Date(item.data.plannedStart!).toLocaleTimeString([], {
+            hour: 'numeric',
+            minute: '2-digit',
+          })}{' '}
+          {item.data.title} · planned
+        </button>
+        {menu}
+      </div>
+    );
+    return item.kind === 'task' ? (
+      <TaskActionSurface
+        key={`planned-${item.id}`}
+        task={item}
+        onEdit={() => onEdit(item)}
+      >
+        {row}
+      </TaskActionSurface>
+    ) : (
+      <CoreItemActionSurface
+        key={`planned-${item.id}`}
+        entity={item}
+        onOpen={open}
+      >
+        {row}
+      </CoreItemActionSurface>
+    );
+  };
   const assignmentEvent = (assignment: Assignment) => (
-    <button
+    <CoreItemActionSurface
       key={assignment.id}
-      className="calendar-task"
-      aria-label={`Open assignment ${assignment.data.title}`}
-      onClick={() => location.assign(`#assignment/${assignment.id}`)}
+      entity={assignment}
+      onOpen={() => location.assign(`#assignment/${assignment.id}`)}
     >
-      <span>{assignment.data.time}</span>📚 {assignment.data.title}
-    </button>
+      {(menu) => (
+        <div className="calendar-task">
+          <button
+            onClick={() => location.assign(`#assignment/${assignment.id}`)}
+          >
+            <span>{assignment.data.time}</span>📚 {assignment.data.title}
+          </button>
+          {menu}
+        </div>
+      )}
+    </CoreItemActionSurface>
   );
   const move = (direction: number) => {
     if (active === 'month' || active === 'year') {
@@ -186,16 +214,23 @@ export function CalendarView({
     }
   };
   const event = (task: Task) => (
-    <button
-      className={`calendar-task priority-border-${task.data.priority}`}
-      key={task.id}
-      draggable
-      onDragStart={(e) => e.dataTransfer.setData('text/stride-task', task.id)}
-      onClick={() => onEdit(task)}
-    >
-      <span>{task.data.time}</span>
-      {task.data.title}
-    </button>
+    <TaskActionSurface key={task.id} task={task} onEdit={onEdit}>
+      {(menu) => (
+        <div
+          className={`calendar-task priority-border-${task.data.priority}`}
+          draggable
+          onDragStart={(event) =>
+            event.dataTransfer.setData('text/stride-task', task.id)
+          }
+        >
+          <button onClick={() => onEdit(task)}>
+            <span>{task.data.time}</span>
+            {task.data.title}
+          </button>
+          {menu}
+        </div>
+      )}
+    </TaskActionSurface>
   );
   return (
     <div className="calendar-view">
@@ -454,22 +489,39 @@ export function CalendarView({
                 )
                 .slice(0, 100)
                 .map((t) => (
-                  <div className="board-card" key={t.id}>
-                    {event(t)}
-                    <p className="muted">
-                      {t.data.due || 'No date'} · P{t.data.priority}
-                    </p>
-                    <Select
-                      label={`Move ${t.data.title}`}
-                      value={t.data.completedAt ? 'Done' : t.data.status}
-                      onChange={(v) => {
-                        if (v === 'Done') void store.complete(t);
-                        else
-                          void store.update(t, { status: v, completedAt: '' });
-                      }}
-                      options={['To do', 'In progress', 'Waiting', 'Done']}
-                    />
-                  </div>
+                  <TaskActionSurface key={t.id} task={t} onEdit={onEdit}>
+                    {(menu) => (
+                      <div className="board-card">
+                        <button
+                          className="task-title"
+                          draggable
+                          onDragStart={(e) =>
+                            e.dataTransfer.setData('text/stride-task', t.id)
+                          }
+                          onClick={() => onEdit(t)}
+                        >
+                          {t.data.title}
+                        </button>
+                        {menu}
+                        <p className="muted">
+                          {t.data.due || 'No date'} · P{t.data.priority}
+                        </p>
+                        <Select
+                          label={`Move ${t.data.title}`}
+                          value={t.data.completedAt ? 'Done' : t.data.status}
+                          onChange={(v) => {
+                            if (v === 'Done') void store.complete(t);
+                            else
+                              void store.update(t, {
+                                status: v,
+                                completedAt: '',
+                              });
+                          }}
+                          options={['To do', 'In progress', 'Waiting', 'Done']}
+                        />
+                      </div>
+                    )}
+                  </TaskActionSurface>
                 ))}
             </section>
           ))}
@@ -485,41 +537,54 @@ export function CalendarView({
                 <th>Priority</th>
                 <th>Duration</th>
                 <th>Labels</th>
+                <th>
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
             </thead>
             <tbody>
               {visible.slice(0, limit).map((t) => (
-                <tr key={t.id}>
-                  <td>
-                    <button className="task-title" onClick={() => onEdit(t)}>
-                      {t.data.title}
-                    </button>
-                  </td>
-                  <td>
-                    <Select
-                      label={`Status of ${t.data.title}`}
-                      value={t.data.status}
-                      onChange={(status) => void store.update(t, { status })}
-                      options={['To do', 'In progress', 'Waiting']}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      aria-label={`Due date of ${t.data.title}`}
-                      type="date"
-                      value={t.data.due}
-                      onChange={(e) =>
-                        void store.update(t, {
-                          due: e.target.value,
-                          ...(!e.target.value ? { time: '' } : {}),
-                        })
-                      }
-                    />
-                  </td>
-                  <td>P{t.data.priority}</td>
-                  <td>{t.data.duration}m</td>
-                  <td>{t.data.tags.join(', ')}</td>
-                </tr>
+                <TaskActionSurface key={t.id} task={t} onEdit={onEdit}>
+                  {(menu) => (
+                    <tr>
+                      <td>
+                        <button
+                          className="task-title"
+                          onClick={() => onEdit(t)}
+                        >
+                          {t.data.title}
+                        </button>
+                      </td>
+                      <td>
+                        <Select
+                          label={`Status of ${t.data.title}`}
+                          value={t.data.status}
+                          onChange={(status) =>
+                            void store.update(t, { status })
+                          }
+                          options={['To do', 'In progress', 'Waiting']}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          aria-label={`Due date of ${t.data.title}`}
+                          type="date"
+                          value={t.data.due}
+                          onChange={(e) =>
+                            void store.update(t, {
+                              due: e.target.value,
+                              ...(!e.target.value ? { time: '' } : {}),
+                            })
+                          }
+                        />
+                      </td>
+                      <td>P{t.data.priority}</td>
+                      <td>{t.data.duration}m</td>
+                      <td>{t.data.tags.join(', ')}</td>
+                      <td>{menu}</td>
+                    </tr>
+                  )}
+                </TaskActionSurface>
               ))}
             </tbody>
           </table>
@@ -552,24 +617,29 @@ export function CalendarView({
               )
               .slice(0, limit)
               .map((t) => (
-                <div className="timeline-row" key={t.id}>
-                  <button className="task-title" onClick={() => onEdit(t)}>
-                    {t.data.title}
-                  </button>
-                  <div className="timeline-track">
-                    <button
-                      className="timeline-bar"
-                      aria-label={`Edit ${t.data.title}, ${t.data.due}`}
-                      onClick={() => onEdit(t)}
-                      style={{
-                        left: `${(daysBetween(t.data.due, start) / count) * 100}%`,
-                        width: `${(Math.min(count - daysBetween(t.data.due, start), Math.max(1, t.data.duration / 1440)) / count) * 100}%`,
-                      }}
-                    >
-                      {t.data.time || '•'}
-                    </button>
-                  </div>
-                </div>
+                <TaskActionSurface key={t.id} task={t} onEdit={onEdit}>
+                  {(menu) => (
+                    <div className="timeline-row">
+                      <button className="task-title" onClick={() => onEdit(t)}>
+                        {t.data.title}
+                      </button>
+                      <div className="timeline-track">
+                        <button
+                          className="timeline-bar"
+                          aria-label={`Edit ${t.data.title}, ${t.data.due}`}
+                          onClick={() => onEdit(t)}
+                          style={{
+                            left: `${(daysBetween(t.data.due, start) / count) * 100}%`,
+                            width: `${(Math.min(count - daysBetween(t.data.due, start), Math.max(1, t.data.duration / 1440)) / count) * 100}%`,
+                          }}
+                        >
+                          {t.data.time || '•'}
+                        </button>
+                      </div>
+                      {menu}
+                    </div>
+                  )}
+                </TaskActionSurface>
               ))}
             <p className="muted">
               Tasks use their due date and estimated duration. Open a task to

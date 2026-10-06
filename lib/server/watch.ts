@@ -1,3 +1,4 @@
+import { workspaceReady } from './reset';
 import { db } from './bindings';
 
 const encoder = new TextEncoder();
@@ -47,5 +48,5 @@ export async function watchOwner(request: Request): Promise<string | null> {
       .run();
     return null;
   }
-  return row.owner;
+  return (await workspaceReady(row.owner)) ? row.owner : null;
 }

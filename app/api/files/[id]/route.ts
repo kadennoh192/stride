@@ -1,3 +1,4 @@
+import { resetBoundary } from '@/lib/server/reset';
 import { readBounded, sha256, UploadError } from '@/lib/server/file-upload';
 import { attachmentId, ATTACHMENT_LIMIT } from '@/lib/stride/attachment-model';
 import { authorize } from '@/lib/server/auth';
@@ -15,6 +16,8 @@ export async function PUT(
     request.headers.get('X-Stride-Owner') !== user.id
   )
     return new Response('Account changed', { status: 409 });
+  const boundary = await resetBoundary(request, user.id);
+  if (boundary) return boundary;
   const { id } = await params;
   if (!attachmentId.test(id))
     return new Response('Invalid file ID', { status: 400 });
@@ -50,6 +53,8 @@ export async function GET(
     request.headers.get('X-Stride-Owner') !== user.id
   )
     return new Response('Account changed', { status: 409 });
+  const boundary = await resetBoundary(request, user.id);
+  if (boundary) return boundary;
   const { id } = await params;
   if (!attachmentId.test(id))
     return new Response('Invalid file ID', { status: 400 });
@@ -77,6 +82,8 @@ export async function DELETE(
   if (!user) return new Response('Sign in required', { status: 401 });
   if (request.headers.get('X-Stride-Owner') !== user.id)
     return new Response('Account changed', { status: 409 });
+  const boundary = await resetBoundary(request, user.id);
+  if (boundary) return boundary;
   const { id } = await params;
   if (!attachmentId.test(id))
     return new Response('Invalid file ID', { status: 400 });

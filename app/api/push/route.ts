@@ -1,3 +1,4 @@
+import { resetBoundary } from '@/lib/server/reset';
 import { authorize } from '@/lib/server/auth';
 import { db, sameOrigin } from '@/lib/server/bindings';
 import {
@@ -34,6 +35,8 @@ export async function POST(request: Request) {
       { error: 'Background reminders are not configured on the server.' },
       { status: 503 },
     );
+  const boundary = await resetBoundary(request, user.id);
+  if (boundary) return boundary;
   try {
     const input = (await request.json()) as {
       action?: string;

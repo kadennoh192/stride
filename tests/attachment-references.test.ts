@@ -8,186 +8,198 @@ import {
 import {
   blank,
   applyEdits,
-  mergeFields,
+  materialize,
+  load,
   saveFile,
   transact,
-  load,
-  closeStorage,
+  getLocalFile,
 } from '../lib/stride/storage';
-import { exportBackup, stageBackup } from '../lib/stride/backup';
-void test('attachment discovery includes archived field values, conflicts, row properties and templates', () => {
-  const state = blank();
-  applyEdits(
-    state,
-    [
-      {
-        id: 'block',
-        kind: 'block',
-        data: { page: 'page', type: 'file', order: 0, file: 'old-file' },
-      },
+import {
+  exportBackupArchive,
+  stageBackupFile,
+  restoreBackup,
+} from '../lib/stride/backup';
+import { noteData, noteText } from '../lib/stride/notes';
+import type { NoteDocument, Field } from '../lib/stride/types';
+function document(id: string): NoteDocument {
+  return {
+    type: 'doc',
+    content: [
+      { type: 'paragraph' },
+      { type: 'attachment', attrs: { id, name: `${id}.txt`, image: false } },
     ],
+  };
+}
+function data(id: string) {
+  const rich = document(id);
+  return {
+    ...noteData('', 'Attached note'),
+    document: rich,
+    text: noteText(rich),
+  };
+}
+void test('attachment discovery includes recoverable note documents, deleted notes and conflict alternatives', () => {
+  const snapshot = blank();
+  applyEdits(
+    snapshot,
+    [{ id: 'note', kind: 'note', data: data('old-file') }],
     'Create',
   );
-  const remote = structuredClone(state);
-  remote.device = 'remote';
   applyEdits(
-    state,
-    [{ id: 'block', kind: 'block', data: { file: 'new-file' } }],
+    snapshot,
+    [
+      {
+        id: 'note',
+        kind: 'note',
+        data: {
+          document: document('new-file'),
+          text: noteText(document('new-file')),
+        },
+      },
+    ],
     'Replace',
   );
-  applyEdits(
+  const local = snapshot.fields['note:document'];
+  const remote: Field = {
+    ...local,
+    value: document('remote-file'),
+    stamp: '999999999999999-remote',
+  };
+  snapshot.conflicts.push({
+    id: 'document-conflict',
+    entity: 'note',
+    key: 'document',
+    local,
     remote,
-    [{ id: 'block', kind: 'block', data: { file: 'competing-file' } }],
-    'Competing',
-  );
-  mergeFields(state, remote.outbox.at(-1)!.fields);
+    at: new Date().toISOString(),
+  });
+  assert.deepEqual([...attachmentReferences(snapshot)].sort(), [
+    'new-file',
+    'old-file',
+    'remote-file',
+  ]);
+  assert.deepEqual([...currentAttachmentReferences(snapshot)], ['new-file']);
   applyEdits(
-    state,
-    [
-      { id: 'block', kind: 'block', data: { _deleted: true } },
-      {
-        id: 'row',
-        kind: 'row',
-        data: {
-          database: 'db',
-          title: 'Entry',
-          values: { legacy: [{ id: 'legacy-file', name: 'Old file' }] },
-          cell_upload: [{ id: 'row-file', name: 'File' }],
-          cell_relation: [{ kind: 'page', id: 'not-file', name: 'Page' }],
-        },
-      },
-      {
-        id: 'page-template',
-        kind: 'template',
-        data: {
-          title: 'Page template',
-          type: 'page',
-          blocks: [{ type: 'image', file: 'template-image' }],
-        },
-      },
-      {
-        id: 'row-template',
-        kind: 'template',
-        data: {
-          title: 'Row template',
-          type: 'row',
-          row: { cell_file: [{ id: 'template-file', name: 'File' }] },
-        },
-      },
-    ],
-    'References',
+    snapshot,
+    [{ id: 'note', kind: 'note', data: { _deleted: true } }],
+    'Delete',
   );
-  assert.deepEqual(
-    [...attachmentReferences(state)].sort(),
-    [
-      'old-file',
-      'new-file',
-      'competing-file',
-      'legacy-file',
-      'row-file',
-      'template-image',
-      'template-file',
-    ].sort(),
-  );
+  assert.equal(attachmentReferences(snapshot).has('old-file'), true);
+  assert.equal(attachmentReferences(snapshot).has('new-file'), true);
 });
-void test('backup staging requires bytes for historical attachments and rejects contradictory kinds without writes', async () => {
-  const owner = 'historical-backup';
-  await saveFile('before-file', new Blob(['before']), owner);
-  await saveFile('after-file', new Blob(['after']), owner);
-  await transact(
-    (s) =>
-      applyEdits(
-        s,
-        [
-          {
-            id: 'block',
-            kind: 'block',
-            data: { page: 'page', type: 'file', order: 0, file: 'before-file' },
+void test('archive captures historical attachment bytes and Trash restores the note', async () => {
+  const owner = 'note-recovery-source';
+  await saveFile(
+    'historical-file',
+    new Blob(['old bytes']),
+    owner,
+    'historical-file.txt',
+  );
+  await saveFile(
+    'current-file',
+    new Blob(['new bytes']),
+    owner,
+    'current-file.txt',
+  );
+  await transact((snapshot) => {
+    applyEdits(
+      snapshot,
+      [{ id: 'note', kind: 'note', data: data('historical-file') }],
+      'Create',
+    );
+    applyEdits(
+      snapshot,
+      [
+        {
+          id: 'note',
+          kind: 'note',
+          data: {
+            document: document('current-file'),
+            text: noteText(document('current-file')),
           },
-        ],
-        'Before',
-      ),
-    owner,
+        },
+      ],
+      'Replace',
+    );
+    applyEdits(
+      snapshot,
+      [{ id: 'note', kind: 'note', data: { _deleted: true } }],
+      'Delete',
+    );
+  }, owner);
+  const archive = await exportBackupArchive(owner);
+  const staged = await stageBackupFile(archive.blob);
+  assert.deepEqual(staged.files.map((file) => file.id).sort(), [
+    'current-file',
+    'historical-file',
+  ]);
+  await restoreBackup(staged, 'note-recovery-target');
+  assert.equal(
+    materialize((await load('note-recovery-target')).fields).length,
+    0,
   );
   await transact(
-    (s) =>
+    (snapshot) =>
       applyEdits(
-        s,
-        [{ id: 'block', kind: 'block', data: { file: 'after-file' } }],
-        'After',
+        snapshot,
+        [{ id: 'note', kind: 'note', data: { _deleted: false } }],
+        'Restore from Trash',
       ),
-    owner,
+    'note-recovery-target',
   );
-  const exported = await exportBackup(owner);
-  const backup = JSON.parse(exported.json);
-  assert.equal((await stageBackup(exported.json)).files.length, 2);
-  backup.files = backup.files.filter(
-    (file: { id: string }) => file.id !== 'before-file',
+  assert.equal(
+    materialize((await load('note-recovery-target')).fields)[0].kind,
+    'note',
   );
-  await assert.rejects(stageBackup(JSON.stringify(backup)), /missing/);
-  const mixed = JSON.parse(exported.json);
-  mixed.snapshot.history[0].fields[0].kind = 'page';
-  await assert.rejects(stageBackup(JSON.stringify(mixed)), /entity type/);
-  const invalid = JSON.parse(exported.json);
-  invalid.files = [null];
-  await assert.rejects(stageBackup(JSON.stringify(invalid)), /metadata/);
-  assert.equal((await load(owner)).history.length, 2);
-  await closeStorage();
+  assert.equal(
+    await (
+      await getLocalFile('historical-file', 'note-recovery-target')
+    )?.blob.text(),
+    'old bytes',
+  );
 });
-
-void test('an explicit attachment tombstone excludes permanently removed bytes from backups', () => {
-  const state = blank('owner');
+void test('permanent file tombstones exclude all historic copies from future backups and sharing checks ignore only the selected note', () => {
+  const snapshot = blank();
   applyEdits(
-    state,
+    snapshot,
+    [
+      { id: 'one', kind: 'note', data: data('shared-file') },
+      { id: 'two', kind: 'note', data: data('shared-file') },
+    ],
+    'Shared file',
+  );
+  assert.equal(
+    currentAttachmentReferences(snapshot, 'one:document').has('shared-file'),
+    true,
+  );
+  applyEdits(
+    snapshot,
     [
       {
-        id: 'block',
-        kind: 'block',
-        data: { page: 'page', type: 'file', order: 0, file: 'private-file' },
+        id: 'two',
+        kind: 'note',
+        data: {
+          document: { type: 'doc', content: [{ type: 'paragraph' }] },
+          text: '',
+        },
       },
     ],
-    'Attached',
+    'Remove second reference',
+  );
+  assert.equal(
+    currentAttachmentReferences(snapshot, 'one:document').has('shared-file'),
+    false,
   );
   applyEdits(
-    state,
+    snapshot,
     [
-      { id: 'block', kind: 'block', data: { file: '' } },
-      {
-        id: 'filePurge_private-file',
-        kind: 'fileTombstone',
-        data: { attachment: 'private-file', _deleted: true },
-      },
-    ],
-    'Permanently removed attachment',
-  );
-  assert.equal(attachmentReferences(state).has('private-file'), false);
-});
-
-void test('a stale purge marker cannot hide another current attachment reference', () => {
-  const state = blank('owner');
-  applyEdits(
-    state,
-    [
-      {
-        id: 'first-block',
-        kind: 'block',
-        data: { page: 'page', type: 'file', order: 0, file: 'shared-file' },
-      },
-      {
-        id: 'second-block',
-        kind: 'block',
-        data: { page: 'page', type: 'file', order: 1, file: 'shared-file' },
-      },
       {
         id: 'filePurge_shared-file',
         kind: 'fileTombstone',
         data: { attachment: 'shared-file', _deleted: true },
       },
     ],
-    'Fixture',
+    'Purge',
   );
-  assert.equal(
-    currentAttachmentReferences(state, 'first-block:file').has('shared-file'),
-    true,
-  );
+  assert.equal(attachmentReferences(snapshot).has('shared-file'), false);
 });

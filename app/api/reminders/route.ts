@@ -1,4 +1,6 @@
 import { db } from '@/lib/server/bindings';
+import { workspaceReady } from '@/lib/server/reset';
+import { RESET_GENERATION } from '@/lib/stride/reset-generation';
 import {
   pushConfigured,
   flushScheduleQueue,
@@ -38,9 +40,9 @@ export async function POST(request: Request) {
     .run();
   const claimed = await database
     .prepare(
-      "UPDATE reminder_jobs SET state='sending',lease=? WHERE id IN (SELECT id FROM reminder_jobs WHERE state='pending' AND due<=? ORDER BY due LIMIT 25) RETURNING *",
+      "UPDATE reminder_jobs SET state='sending',lease=? WHERE id IN (SELECT id FROM reminder_jobs WHERE state='pending' AND due<=? AND owner IN (SELECT owner FROM workspace_resets WHERE generation=? AND phase='complete') ORDER BY due LIMIT 25) RETURNING *",
     )
-    .bind(now + 120000, now)
+    .bind(now + 120000, now, RESET_GENERATION)
     .all<{
       id: string;
       owner: string;
@@ -55,6 +57,7 @@ export async function POST(request: Request) {
     failed = 0;
   for (const job of claimed.results) {
     try {
+      if (!(await workspaceReady(job.owner))) continue;
       const entity = await serverEntity(job.owner, job.entity);
       if (
         !entity ||
@@ -188,6 +191,7 @@ export async function POST(request: Request) {
       }
       let delivered = 0;
       for (const sub of subscriptions.results) {
+        if (!(await workspaceReady(job.owner))) break;
         const previous = await database
           .prepare(
             'SELECT delivered FROM reminder_deliveries WHERE job=? AND endpoint=? AND round=?',
@@ -234,9 +238,9 @@ export async function POST(request: Request) {
         if (response.ok) {
           await database
             .prepare(
-              'INSERT OR IGNORE INTO reminder_deliveries (job,endpoint,round,delivered) VALUES (?,?,?,?)',
+              'INSERT OR IGNORE INTO reminder_deliveries (job,endpoint,round,delivered) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM reminder_jobs WHERE id=?)',
             )
-            .bind(job.id, sub.endpoint, job.round, now)
+            .bind(job.id, sub.endpoint, job.round, now, job.id)
             .run();
           delivered++;
         } else if (response.status === 404 || response.status === 410)

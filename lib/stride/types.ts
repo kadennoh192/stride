@@ -2,20 +2,14 @@ import type { AlarmSchedule } from './alarms';
 export type Kind =
   | 'task'
   | 'project'
-  | 'page'
-  | 'block'
-  | 'database'
-  | 'row'
+  | 'note'
+  | 'folder'
   | 'habit'
   | 'habitLog'
   | 'session'
   | 'countdown'
   | 'settings'
-  | 'view'
-  | 'comment'
   | 'completion'
-  | 'template'
-  | 'favorite'
   | 'fileTombstone'
   | 'course'
   | 'assignment'
@@ -28,13 +22,9 @@ export interface Data {
   title?: string;
   text?: string;
   description?: string;
-  page?: string;
   parent?: string;
-  database?: string;
   at?: string;
   date?: string;
-  icon?: string;
-  cover?: string;
   color?: string;
   url?: string;
   target?: string;
@@ -141,94 +131,39 @@ export type Project = BaseEntity<
     [key: string]: unknown;
   }
 >;
-export type Page = BaseEntity<
-  'page',
+export interface NoteNode {
+  type: string;
+  text?: string;
+  attrs?: Record<string, unknown>;
+  marks?: { type: string; attrs?: Record<string, unknown> }[];
+  content?: NoteNode[];
+}
+export interface NoteDocument extends NoteNode {
+  type: 'doc';
+  content: NoteNode[];
+}
+export type Note = BaseEntity<
+  'note',
   {
     title: string;
-    icon: string;
-    cover: string;
+    document: NoteDocument;
+    text: string;
+    folder: string;
+    pinned: boolean;
+    createdAt: string;
+    updatedAt: string;
+    [key: string]: unknown;
+  }
+>;
+export type Folder = BaseEntity<
+  'folder',
+  {
+    title: string;
     parent: string;
     [key: string]: unknown;
   }
 >;
-export type BlockType =
-  | 'paragraph'
-  | 'heading1'
-  | 'heading2'
-  | 'heading3'
-  | 'bullet'
-  | 'number'
-  | 'check'
-  | 'toggle'
-  | 'quote'
-  | 'callout'
-  | 'divider'
-  | 'code'
-  | 'table'
-  | 'image'
-  | 'file'
-  | 'link'
-  | 'embed'
-  | 'database';
-export type Block = BaseEntity<
-  'block',
-  {
-    page: string;
-    type: BlockType;
-    text: string;
-    order: number;
-    checked: boolean;
-    url?: string;
-    file?: string;
-    name?: string;
-    [key: string]: unknown;
-  }
->;
-export type PropertyType =
-  | 'text'
-  | 'number'
-  | 'select'
-  | 'multi-select'
-  | 'status'
-  | 'date'
-  | 'checkbox'
-  | 'url'
-  | 'email'
-  | 'phone'
-  | 'files'
-  | 'person'
-  | 'relation'
-  | 'rollup'
-  | 'formula';
-export interface Property {
-  id: string;
-  name: string;
-  type: PropertyType;
-  options: string[];
-  target?: string;
-  expression?: string;
-  relation?: string;
-  property?: string;
-  aggregate?: 'count' | 'sum' | 'average' | 'min' | 'max';
-}
-export type Database = BaseEntity<
-  'database',
-  {
-    title: string;
-    properties: Property[];
-    dateProperty: string;
-    [key: string]: unknown;
-  }
->;
-export type DatabaseRow = BaseEntity<
-  'row',
-  {
-    database: string;
-    title: string;
-    values: Record<string, unknown>;
-    [key: string]: unknown;
-  }
->;
+export type TaskLayout = 'list' | 'board' | 'table' | 'timeline';
 export type Habit = BaseEntity<
   'habit',
   {
@@ -272,42 +207,6 @@ export type Countdown = BaseEntity<
   }
 >;
 export type SettingsEntity = BaseEntity<'settings', Settings>;
-export const databaseLayouts = [
-  'table',
-  'board',
-  'list',
-  'gallery',
-  'calendar',
-  'timeline',
-] as const;
-export type DatabaseLayout = (typeof databaseLayouts)[number];
-export type SavedView = BaseEntity<
-  'view',
-  {
-    title: string;
-    database?: string;
-    layout?: DatabaseLayout;
-    query?: string;
-    filterProp?: string;
-    filterValue?: string;
-    sort?: string;
-    descending?: boolean;
-    group?: string;
-    hidden?: string[];
-    propertyOrder?: string[];
-    filter?: Record<string, unknown>;
-    [key: string]: unknown;
-  }
->;
-export type Comment = BaseEntity<
-  'comment',
-  {
-    target: string;
-    text: string;
-    at: string;
-    [key: string]: unknown;
-  }
->;
 export type Completion = BaseEntity<
   'completion',
   {
@@ -315,26 +214,6 @@ export type Completion = BaseEntity<
     at: string;
     title?: string;
     due?: string;
-    [key: string]: unknown;
-  }
->;
-export type Template = BaseEntity<
-  'template',
-  {
-    type: 'page' | 'row';
-    title: string;
-    database?: string;
-    pageTemplate?: Page['data'];
-    blocks?: Partial<Block['data']>[];
-    row?: Partial<DatabaseRow['data']>;
-    [key: string]: unknown;
-  }
->;
-export type Favorite = BaseEntity<
-  'favorite',
-  {
-    title: string;
-    tip: number;
     [key: string]: unknown;
   }
 >;
@@ -448,20 +327,14 @@ export type StreakDay = BaseEntity<
 export type Entity =
   | Task
   | Project
-  | Page
-  | Block
-  | Database
-  | DatabaseRow
+  | Note
+  | Folder
   | Habit
   | HabitLog
   | FocusSession
   | Countdown
   | SettingsEntity
-  | SavedView
-  | Comment
   | Completion
-  | Template
-  | Favorite
   | FileTombstone
   | Course
   | Assignment
@@ -511,7 +384,8 @@ export interface Settings {
   dashboardCards: string[];
   quietStart: string;
   quietEnd: string;
-  taskViews: Record<string, string>;
+  taskLayout: TaskLayout;
+  taskViews: Record<string, TaskLayout>;
   calendarView: string;
   calendarSpan: number;
   calendarShowCompleted: boolean;
@@ -576,6 +450,7 @@ export const defaults: Settings = {
   ],
   quietStart: '22:00',
   quietEnd: '07:00',
+  taskLayout: 'list',
   taskViews: {},
   calendarView: 'month',
   calendarSpan: 4,

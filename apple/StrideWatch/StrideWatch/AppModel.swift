@@ -19,6 +19,10 @@ final class AppModel: ObservableObject {
     }
 
     func pair(code: String) async {
+        // A new pairing is a new workspace boundary. Never replay cached actions
+        // from the revoked credential, even if pairing or refresh fails.
+        disconnect()
+        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
         await run {
             guard let api else { throw StoreError.invalidOrigin }
             let result = try await api.pair(code: code)

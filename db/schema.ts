@@ -89,3 +89,12 @@ export const reminderDeliveries = sqliteTable(
   },
   (t) => [primaryKey({ columns: [t.job, t.endpoint, t.round] })],
 );
+
+export const workspaceResets = sqliteTable('workspace_resets', {
+  owner: text('owner').notNull().primaryKey(),
+  generation: text('generation').notNull(),
+  phase: text('phase').notNull().default('d1'),
+  lease: text('lease').notNull().default(''),
+  leaseUntil: integer('lease_until').notNull().default(0),
+  completedAt: text('completed_at').notNull().default(''),
+});

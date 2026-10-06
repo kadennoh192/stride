@@ -1,3 +1,4 @@
+import { generationHeaders } from './reset-generation';
 import {
   acknowledgeFileDelete,
   cancelFileDelete,
@@ -14,7 +15,7 @@ export async function fileURL(id: string, owner: string) {
       'This attachment is missing on this device. Restore it from a complete backup.',
     );
   const response = await fetch(`/api/files/${encodeURIComponent(id)}`, {
-    headers: { 'X-Stride-Owner': owner },
+    headers: { 'X-Stride-Owner': owner, ...generationHeaders },
     cache: 'no-store',
   });
   if (!response.ok)
@@ -42,7 +43,7 @@ export async function deleteRemoteFile(deletion: FileDelete) {
     `/api/files/${encodeURIComponent(deletion.id)}`,
     {
       method: 'DELETE',
-      headers: { 'X-Stride-Owner': deletion.owner },
+      headers: { 'X-Stride-Owner': deletion.owner, ...generationHeaders },
       signal: AbortSignal.timeout(20000),
     },
   );

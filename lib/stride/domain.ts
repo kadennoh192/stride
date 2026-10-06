@@ -1,12 +1,5 @@
 import { stringValue } from './types';
-import {
-  dateKey,
-  shiftDate,
-  type Task,
-  type Entity,
-  type DatabaseRow,
-  type Property,
-} from './types';
+import { dateKey, shiftDate, type Task } from './types';
 export function validDate(value: string) {
   return (
     /^\d{4}-\d{2}-\d{2}$/.test(value) &&
@@ -126,25 +119,6 @@ export function safeURL(value: string) {
     return '';
   }
 }
-export function embedURL(value: string) {
-  try {
-    const u = new URL(value);
-    if (u.protocol !== 'https:') return '';
-    if (['www.youtube.com', 'youtube.com'].includes(u.hostname)) {
-      const id = u.searchParams.get('v') || u.pathname.split('/embed/')[1];
-      return id && /^[\w-]{11}$/.test(id)
-        ? `https://www.youtube-nocookie.com/embed/${id}`
-        : '';
-    }
-    if (u.hostname === 'youtu.be' && /^[\w-]{11}$/.test(u.pathname.slice(1)))
-      return `https://www.youtube-nocookie.com/embed/${u.pathname.slice(1)}`;
-    if (u.hostname === 'player.vimeo.com' && /^\/video\/\d+$/.test(u.pathname))
-      return u.href;
-    return '';
-  } catch {
-    return '';
-  }
-}
 // Wall time -> UTC. Ambiguous times select the earliest matching instant; gaps advance to the first real minute.
 export function zonedInstant(date: string, time: string, zone: string): number {
   if (
@@ -184,40 +158,4 @@ export function zonedInstant(date: string, time: string, zone: string): number {
     if (w >= target && w < target + 3 * 3600000) return test;
   }
   return guess;
-}
-export function propertyValue(
-  row: DatabaseRow,
-  property: Property,
-  entities: Entity[],
-): unknown {
-  if (property.type !== 'rollup') return row.data.values[property.id];
-  const ids = row.data.values[property.relation || ''];
-  const related = entities.filter(
-    (e) => Array.isArray(ids) && ids.includes(e.id),
-  );
-  const values = related
-    .map((e) =>
-      Number(
-        e.kind === 'row'
-          ? (e.data.values as Record<string, unknown>)?.[
-              property.property || ''
-            ]
-          : e.data[property.property || ''],
-      ),
-    )
-    .filter(Number.isFinite);
-  switch (property.aggregate) {
-    case 'sum':
-      return values.reduce((a, b) => a + b, 0);
-    case 'average':
-      return values.length
-        ? values.reduce((a, b) => a + b, 0) / values.length
-        : 0;
-    case 'min':
-      return values.length ? Math.min(...values) : 0;
-    case 'max':
-      return values.length ? Math.max(...values) : 0;
-    default:
-      return related.length;
-  }
 }

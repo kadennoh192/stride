@@ -1,4 +1,5 @@
 'use client';
+import { CoreItemActionSurface } from '../core-item-actions';
 import { useMemo, useState } from 'react';
 import { useStride } from '@/lib/stride/store';
 import {
@@ -681,23 +682,34 @@ export default function School({ targetId }: { targetId?: string }) {
       assignment.data.status !== 'Done',
   ).length;
   const row = (assignment: Assignment) => (
-    <button
+    <CoreItemActionSurface
       key={assignment.id}
-      className="search-result"
-      onClick={() => setEditingAssignment(assignment)}
+      entity={assignment}
+      onOpen={() => setEditingAssignment(assignment)}
     >
-      <span>
-        <strong>{assignment.data.title}</strong> ·{' '}
-        {courses.find((course) => course.id === assignment.data.course)?.data
-          .title || 'Course removed'}
-      </span>
-      <small>
-        {assignment.data.due || 'No due date'} · {assignment.data.status}
-        {assignment.data.score !== null
-          ? ` · ${assignment.data.score}/${assignment.data.possible}`
-          : ''}
-      </small>
-    </button>
+      {(menu) => (
+        <div className="core-item-row">
+          <button
+            key={assignment.id}
+            className="search-result"
+            onClick={() => setEditingAssignment(assignment)}
+          >
+            <span>
+              <strong>{assignment.data.title}</strong> ·{' '}
+              {courses.find((course) => course.id === assignment.data.course)
+                ?.data.title || 'Course removed'}
+            </span>
+            <small>
+              {assignment.data.due || 'No due date'} · {assignment.data.status}
+              {assignment.data.score !== null
+                ? ` · ${assignment.data.score}/${assignment.data.possible}`
+                : ''}
+            </small>
+          </button>
+          {menu}
+        </div>
+      )}
+    </CoreItemActionSurface>
   );
   if (!store.settings.schoolSetup)
     return (

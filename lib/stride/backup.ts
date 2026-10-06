@@ -1,3 +1,4 @@
+import { RESET_GENERATION, PRE_RESET_BACKUP_MESSAGE } from './reset-generation';
 import { attachmentReferences } from './attachment-references';
 import { attachmentId, contentHash } from './attachment-model';
 import {
@@ -30,14 +31,14 @@ interface ArchiveFile extends Omit<BackupFile, 'bytes'> {
 }
 interface BackupArchive {
   format: 'stride-archive';
-  version: 4;
+  version: 5;
   created: string;
   snapshot: Snapshot;
   files: ArchiveFile[];
 }
 export interface Backup {
   format: 'stride';
-  version: 3;
+  version: 5;
   created: string;
   snapshot: Snapshot;
   files: BackupFile[];
@@ -51,8 +52,8 @@ export interface StagedBackup {
 const MAX_BYTES = 150_000_000;
 const LEGACY_ATTACHMENT_LIMIT = 100_000_000;
 const FILE_LIMIT = 10_000_000;
-const ARCHIVE_MAGIC = 'STRIDE4\n';
-const PREVIOUS_ARCHIVE_MAGIC = 'STRIDE3\n';
+const ARCHIVE_MAGIC = 'STRIDE5\n';
+
 const ARCHIVE_PREFIX_BYTES = 76;
 export function encodeBytes(bytes: Uint8Array) {
   let raw = '';
@@ -124,7 +125,7 @@ async function captureComplete(owner: string) {
     created: new Date().toISOString(),
   };
 }
-async function legacyExport(
+async function compatibilityExport(
   snapshot: Snapshot,
   local: LocalFile[],
   created: string,
@@ -147,7 +148,7 @@ async function legacyExport(
     });
   const backup: Backup = {
     format: 'stride',
-    version: 3,
+    version: 5,
     created,
     snapshot,
     files,
@@ -163,14 +164,14 @@ async function legacyExport(
   );
   return {
     json,
-    code: `STRIDE3.${await digest(compressed)}.${encodeBytes(compressed)}`,
+    code: `STRIDE5.${await digest(compressed)}.${encodeBytes(compressed)}`,
   };
 }
 export async function exportBackup(
   owner: string,
 ): Promise<{ json: string; code: string }> {
   const { snapshot, files, created } = await captureComplete(owner);
-  return legacyExport(snapshot, files, created);
+  return compatibilityExport(snapshot, files, created);
 }
 
 /** Stream-friendly backup container: metadata is bounded, attachment Blobs are not base64-expanded. */
@@ -190,7 +191,7 @@ export async function exportBackupArchive(
   const header = new TextEncoder().encode(
     JSON.stringify({
       format: 'stride-archive',
-      version: 4,
+      version: 5,
       created,
       snapshot,
       files: metadata,
@@ -208,7 +209,7 @@ export async function exportBackupArchive(
     LEGACY_ATTACHMENT_LIMIT
   )
     try {
-      code = (await legacyExport(snapshot, files, created)).code;
+      code = (await compatibilityExport(snapshot, files, created)).code;
     } catch (error) {
       if (!String(error).includes('150 MB export limit')) throw error;
     }
@@ -227,9 +228,14 @@ function validateEnvelope(value: unknown) {
     throw new Error('Unsupported or incomplete backup');
   const snapshot = value.snapshot as unknown as Snapshot;
   if (
+    snapshot.version !== SNAPSHOT_VERSION ||
+    snapshot.generation !== RESET_GENERATION
+  )
+    throw new Error(PRE_RESET_BACKUP_MESSAGE);
+  if (
     typeof value.created !== 'string' ||
     !Number.isFinite(Date.parse(value.created)) ||
-    ![2, SNAPSHOT_VERSION].includes(snapshot.version) ||
+    snapshot.version !== SNAPSHOT_VERSION ||
     !record(snapshot.fields) ||
     !Array.isArray(snapshot.history) ||
     !Array.isArray(snapshot.outbox) ||
@@ -305,10 +311,8 @@ export async function stageBackup(input: string): Promise<StagedBackup> {
   if (json.length > MAX_BYTES * 1.5) throw new Error('Backup is too large');
   if (json.startsWith('STRIDE')) {
     const parts = json.split('.');
-    if (parts.length !== 3 || !['STRIDE2', 'STRIDE3'].includes(parts[0]))
-      throw new Error(
-        'Unsupported Stride export version. Use a newer version of Stride.',
-      );
+    if (parts.length !== 3 || parts[0] !== 'STRIDE5')
+      throw new Error(PRE_RESET_BACKUP_MESSAGE);
     const compressed = decodeBytes(parts[2]);
     if ((await digest(compressed)) !== parts[1])
       throw new Error(
@@ -335,11 +339,13 @@ export async function stageBackup(input: string): Promise<StagedBackup> {
   } catch {
     throw new Error('This is not a valid Stride backup.');
   }
+  if (record(parsed) && parsed.format === 'stride' && parsed.version !== 5)
+    throw new Error(PRE_RESET_BACKUP_MESSAGE);
   if (
     !record(parsed) ||
     !Array.isArray(parsed.files) ||
     parsed.format !== 'stride' ||
-    ![2, 3].includes(Number(parsed.version))
+    Number(parsed.version) !== 5
   )
     throw new Error('Unsupported or incomplete backup');
   const validated = validateEnvelope(parsed);
@@ -381,7 +387,9 @@ export async function stageBackupFile(input: Blob): Promise<StagedBackup> {
     await input.slice(0, ARCHIVE_PREFIX_BYTES).arrayBuffer(),
   );
   const magic = new TextDecoder().decode(prefix.subarray(0, 8));
-  if (magic !== ARCHIVE_MAGIC && magic !== PREVIOUS_ARCHIVE_MAGIC) {
+  if (magic === 'STRIDE3\n' || magic === 'STRIDE4\n')
+    throw new Error(PRE_RESET_BACKUP_MESSAGE);
+  if (magic !== ARCHIVE_MAGIC) {
     if (input.size > MAX_BYTES)
       throw new Error(
         'Large backups must use the current .stride archive format.',
@@ -420,7 +428,7 @@ export async function stageBackupFile(input: Blob): Promise<StagedBackup> {
   if (
     !record(parsed) ||
     parsed.format !== 'stride-archive' ||
-    ![3, 4].includes(Number(parsed.version)) ||
+    Number(parsed.version) !== 5 ||
     !Array.isArray(parsed.files)
   )
     throw new Error('Unsupported or incomplete backup');

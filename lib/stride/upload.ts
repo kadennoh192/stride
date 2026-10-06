@@ -1,3 +1,4 @@
+import { generationHeaders } from './reset-generation';
 import { acknowledgeFileTransfer, hashBlob, type LocalFile } from './storage';
 import {
   UPLOAD_CHUNK_SIZE,
@@ -41,6 +42,7 @@ export async function uploadFile(
   const headers = {
     'Content-Type': 'application/json',
     'X-Stride-Owner': file.owner,
+    ...generationHeaders,
   };
   const status = (await responseJSON(
     await fetch(url, {
@@ -116,6 +118,7 @@ export async function uploadFile(
           'Content-Type': 'application/octet-stream',
           'X-Content-SHA256': await hashBlob(chunk),
           'X-Stride-Owner': file.owner,
+          ...generationHeaders,
         },
         body: chunk,
         signal: AbortSignal.timeout(30000),

@@ -159,7 +159,10 @@ self.addEventListener('notificationclick', (event) => {
           const response = await fetch('/api/alarms', {
             method: 'POST',
             credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Stride-Generation': 'stride-notes-2026-10-05',
+            },
             body: JSON.stringify({
               id: event.notification.data.alarmId,
               occurrence: event.notification.data.occurrence,

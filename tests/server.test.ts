@@ -1,3 +1,7 @@
+import {
+  RESET_GENERATION,
+  generationHeaders,
+} from '../lib/stride/reset-generation';
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -124,7 +128,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
     await build({
       stdin: {
         contents:
-          "export * as upload from './app/api/files/[id]/upload/route'; export * as sync from './app/api/sync/route'; export * as auth from './app/api/auth/route'; export * as files from './app/api/files/[id]/route'; export * as push from './app/api/push/route'; export * as dispatch from './app/api/reminders/route'; export * as alarms from './app/api/alarms/route'; export * as watchPair from './app/api/watch/pair/route'; export * as watch from './app/api/watch/route'; export * as time from './app/api/time/route';",
+          "export * as reset from './app/api/workspace/reset/route'; export * as resetModel from './lib/server/reset'; export * as upload from './app/api/files/[id]/upload/route'; export * as sync from './app/api/sync/route'; export * as auth from './app/api/auth/route'; export * as files from './app/api/files/[id]/route'; export * as push from './app/api/push/route'; export * as dispatch from './app/api/reminders/route'; export * as alarms from './app/api/alarms/route'; export * as watchPair from './app/api/watch/pair/route'; export * as watch from './app/api/watch/route'; export * as time from './app/api/time/route';",
         resolveDir: process.cwd(),
       },
       outfile: output,
@@ -181,6 +185,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       return new Request('https://stride.test/api/reminders', {
         method: 'POST',
         headers: {
+          ...generationHeaders,
           'Content-Type': 'application/json',
           'X-Stride-Time': timestamp,
           'X-Stride-Nonce': nonce,
@@ -203,14 +208,216 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       new Request('https://stride.test/api/sync', {
         method: 'POST',
         headers: {
+          ...generationHeaders,
           Origin: origin,
           Cookie: cookie,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
       });
+    const resetRequest = (
+      origin = 'https://stride.test',
+      cookie = 'stride_access=valid-alice',
+      headers: Record<string, string> = generationHeaders,
+    ) =>
+      new Request('https://stride.test/api/workspace/reset', {
+        method: 'POST',
+        headers: { ...headers, Origin: origin, Cookie: cookie },
+      });
+    assert.equal(
+      (await api.reset.POST(resetRequest('https://evil.test'))).status,
+      403,
+    );
+    assert.equal(
+      (await api.reset.POST(resetRequest('https://stride.test', ''))).status,
+      401,
+    );
+    assert.equal(
+      (await api.reset.POST(resetRequest('https://stride.test', undefined, {})))
+        .status,
+      426,
+    );
+    assert.equal(
+      (
+        await api.sync.POST(
+          make({
+            version: 4,
+            generation: RESET_GENERATION,
+            changes: [],
+            cursor: 0,
+            owner: 'alice',
+          }),
+        )
+      ).status,
+      423,
+    );
+    for (const owner of ['alice', 'isolated']) {
+      await DB.batch([
+        DB.prepare(
+          "INSERT INTO fields VALUES (?, 'legacy-page', 'page', 'title', '\"Legacy\"', '000000000000001-old')",
+        ).bind(owner),
+        DB.prepare(
+          "INSERT INTO changes (owner,id,payload) VALUES (?, 'old-change', '{}')",
+        ).bind(owner),
+        DB.prepare("INSERT INTO dedup VALUES (?, 'old-change')").bind(owner),
+        DB.prepare(
+          "INSERT INTO reminder_jobs (id,owner,entity,due,original_due) VALUES (?,?, 'legacy-page',1,1)",
+        ).bind(`${owner}-old-job`, owner),
+        DB.prepare('INSERT INTO reminder_deliveries VALUES (?, ?,0,1)').bind(
+          `${owner}-old-job`,
+          `${owner}-endpoint`,
+        ),
+        DB.prepare(
+          "INSERT INTO reminder_schedule_queue VALUES (?, 'legacy-page', 'old')",
+        ).bind(owner),
+        DB.prepare("INSERT INTO push_subscriptions VALUES (?, ?, '{}',1)").bind(
+          owner,
+          `${owner}-endpoint`,
+        ),
+        DB.prepare("INSERT INTO watch_tokens VALUES (?, ?, '', '')").bind(
+          `${owner}-token`,
+          owner,
+        ),
+      ]);
+      await FILES.put(`${owner}/old-file`, 'old bytes');
+      await FILES.put(
+        `__stride_uploads/${owner}/old-file/chunk`,
+        'old partial bytes',
+      );
+      await FILES.put(`__stride_upload_gc/${owner}`, 'old gc marker');
+    }
+    const originalBucket = globals.__strideTestEnv as { FILES: typeof FILES };
+    let interruptCleanup = true;
+    originalBucket.FILES = new Proxy(FILES, {
+      get(target, property) {
+        if (property === 'delete')
+          return async (...args: Parameters<typeof FILES.delete>) => {
+            if (interruptCleanup) {
+              interruptCleanup = false;
+              throw new Error('Interrupted R2');
+            }
+            return target.delete(...args);
+          };
+        const value = Reflect.get(target, property);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    assert.equal((await api.reset.POST(resetRequest())).status, 503);
+    assert.equal((await api.resetModel.resetProgress('alice')).phase, 'files');
+    assert.equal(await api.resetModel.workspaceReady('alice'), false);
+    assert.ok(await FILES.head('alice/old-file'));
+    const resumedReset = await api.reset.POST(resetRequest());
+    assert.equal(resumedReset.status, 200);
+    assert.equal((await resumedReset.json()).complete, true);
+    originalBucket.FILES = FILES;
+    for (const table of [
+      'fields',
+      'changes',
+      'dedup',
+      'reminder_jobs',
+      'reminder_schedule_queue',
+      'push_subscriptions',
+      'watch_tokens',
+    ]) {
+      assert.equal(
+        (await DB.prepare(
+          `SELECT count(*) AS n FROM ${table} WHERE owner='alice'`,
+        ).first<{ n: number }>())!.n,
+        0,
+        table,
+      );
+      assert.equal(
+        (await DB.prepare(
+          `SELECT count(*) AS n FROM ${table} WHERE owner='isolated'`,
+        ).first<{ n: number }>())!.n,
+        1,
+        table,
+      );
+    }
+    assert.equal(
+      (await DB.prepare(
+        "SELECT count(*) AS n FROM reminder_deliveries WHERE job='alice-old-job'",
+      ).first<{ n: number }>())!.n,
+      0,
+    );
+    assert.equal(
+      (await DB.prepare(
+        "SELECT count(*) AS n FROM reminder_deliveries WHERE job='isolated-old-job'",
+      ).first<{ n: number }>())!.n,
+      1,
+    );
+    assert.equal(await FILES.head('alice/old-file'), null);
+    assert.equal(
+      await FILES.head('__stride_uploads/alice/old-file/chunk'),
+      null,
+    );
+    assert.equal(await FILES.head('__stride_upload_gc/alice'), null);
+    assert.ok(await FILES.head('isolated/old-file'));
+    // Dispose of this isolated test fixture only after checking isolation.
+    await api.resetModel.initializeWorkspaceReset('isolated');
+    // Another request holding a live lease cannot trigger duplicate cleanup.
+    await DB.prepare(
+      "INSERT INTO workspace_resets VALUES ('leased', ?, 'd1', 'other-request', ?, '')",
+    )
+      .bind(RESET_GENERATION, Date.now() + 60000)
+      .run();
+    assert.equal(
+      (await api.resetModel.initializeWorkspaceReset('leased')).phase,
+      'd1',
+    );
+    await DB.prepare(
+      "UPDATE workspace_resets SET lease_until=0 WHERE owner='leased'",
+    ).run();
+    assert.equal(
+      (await api.resetModel.initializeWorkspaceReset('leased')).phase,
+      'complete',
+    );
+    await FILES.put('alice/new-file', 'new data');
+    const completedAt = (await api.resetModel.resetProgress('alice'))
+      .completed_at;
+    assert.equal((await api.reset.POST(resetRequest())).status, 200);
+    assert.equal(
+      (await api.resetModel.resetProgress('alice')).completed_at,
+      completedAt,
+    );
+    assert.ok(await FILES.head('alice/new-file'));
+    const staleMutation = (path: string, method: 'POST' | 'PUT' = 'POST') =>
+      new Request(`https://stride.test${path}`, {
+        method,
+        headers: {
+          Origin: 'https://stride.test',
+          Cookie: 'stride_access=valid-alice',
+        },
+        body: '{}',
+      });
+    const staleFileContext = { params: Promise.resolve({ id: 'stale-file' }) };
+    assert.equal(
+      (
+        await api.files.PUT(
+          staleMutation('/api/files/stale-file', 'PUT'),
+          staleFileContext,
+        )
+      ).status,
+      426,
+    );
+    assert.equal(
+      (
+        await api.upload.POST(
+          staleMutation('/api/files/stale-file/upload'),
+          staleFileContext,
+        )
+      ).status,
+      426,
+    );
+    assert.equal((await api.push.POST(staleMutation('/api/push'))).status, 426);
+    assert.equal(
+      (await api.alarms.POST(staleMutation('/api/alarms'))).status,
+      426,
+    );
+
     const input = {
-      version: 2,
+      version: 4,
+      generation: RESET_GENERATION,
       owner: 'alice',
       cursor: 0,
       changes: state.outbox,
@@ -256,6 +463,17 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       0,
     );
     const reused = structuredClone(input);
+    const newFieldCount = await DB.prepare(
+      "SELECT COUNT(*) as n FROM fields WHERE owner='alice'",
+    ).first('n');
+    assert.ok(Number(newFieldCount) > 0);
+    assert.equal((await api.reset.POST(resetRequest())).status, 200);
+    assert.equal(
+      await DB.prepare(
+        "SELECT COUNT(*) as n FROM fields WHERE owner='alice'",
+      ).first('n'),
+      newFieldCount,
+    );
     reused.changes[0].label = 'Different operation';
     assert.equal((await api.sync.POST(make(reused))).status, 409);
     assert.equal(
@@ -277,6 +495,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       new Request('https://stride.test/api/push', {
         method: 'POST',
         headers: {
+          ...generationHeaders,
           Origin: 'https://stride.test',
           Cookie: cookie,
           'Content-Type': 'application/json',
@@ -443,7 +662,10 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       (
         await api.auth.GET(
           new Request('https://stride.test/api/auth', {
-            headers: { Cookie: 'stride_access=valid-alice' },
+            headers: {
+              ...generationHeaders,
+              Cookie: 'stride_access=valid-alice',
+            },
           }),
         )
       ).status,
@@ -474,6 +696,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       new Request('https://stride.test/api/auth', {
         method: 'POST',
         headers: {
+          ...generationHeaders,
           Origin: 'https://stride.test',
           'Content-Type': 'application/json',
         },
@@ -491,6 +714,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       new Request('https://stride.test/api/auth', {
         method: 'POST',
         headers: {
+          ...generationHeaders,
           Origin: 'https://stride.test',
           'Content-Type': 'application/json',
         },
@@ -524,6 +748,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       new Request('https://stride.test/api/auth', {
         method: 'POST',
         headers: {
+          ...generationHeaders,
           Origin: 'https://stride.test',
           'Content-Type': 'application/json',
           Cookie: `stride_auth_flow=${encodeURIComponent(flowCookie)}`,
@@ -548,6 +773,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       new Request('https://stride.test/api/auth', {
         method: 'POST',
         headers: {
+          ...generationHeaders,
           Origin: 'https://stride.test',
           'Content-Type': 'application/json',
         },
@@ -559,6 +785,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       new Request('https://stride.test/api/auth', {
         method: 'POST',
         headers: {
+          ...generationHeaders,
           Origin: 'https://stride.test',
           'Content-Type': 'application/json',
           Cookie: `stride_auth_flow=${encodeURIComponent(flowCookie)}`,
@@ -571,6 +798,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       new Request('https://stride.test/api/auth', {
         method: 'POST',
         headers: {
+          ...generationHeaders,
           Origin: 'https://stride.test',
           'Content-Type': 'application/json',
         },
@@ -592,6 +820,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       new Request('https://stride.test/api/auth', {
         method: 'POST',
         headers: {
+          ...generationHeaders,
           Origin: 'https://stride.test',
           'Content-Type': 'application/json',
           Cookie: `stride_auth_flow=${encodeURIComponent(recoveryCookie)}`,
@@ -607,6 +836,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       new Request('https://stride.test/api/auth', {
         method: 'POST',
         headers: {
+          ...generationHeaders,
           Origin: 'https://stride.test',
           'Content-Type': 'application/json',
         },
@@ -622,6 +852,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       new Request('https://stride.test/api/auth', {
         method: 'POST',
         headers: {
+          ...generationHeaders,
           Origin: 'https://stride.test',
           'Content-Type': 'application/json',
         },
@@ -651,6 +882,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       new Request('https://stride.test/api/auth', {
         method: 'POST',
         headers: {
+          ...generationHeaders,
           Origin: 'https://stride.test',
           'Content-Type': 'application/json',
           Cookie: 'stride_access=valid-intruder',
@@ -663,6 +895,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       new Request('https://stride.test/api/auth', {
         method: 'POST',
         headers: {
+          ...generationHeaders,
           Origin: 'https://stride.test',
           'Content-Type': 'application/json',
           Cookie: 'stride_access=valid-alice',
@@ -676,6 +909,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
         await api.files.GET(
           new Request('https://stride.test/api/files/test-file', {
             headers: {
+              ...generationHeaders,
               Cookie: 'stride_access=valid-alice',
               'X-Stride-Owner': 'bob',
             },
@@ -694,6 +928,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
     const upload = new Request('https://stride.test/api/files/test-file', {
       method: 'PUT',
       headers: {
+        ...generationHeaders,
         Origin: 'https://stride.test',
         Cookie: 'stride_access=valid-alice',
         'X-Content-SHA256': digest,
@@ -710,7 +945,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
     );
     const downloaded = await api.files.GET(
       new Request(upload.url, {
-        headers: { Cookie: 'stride_access=valid-alice' },
+        headers: { ...generationHeaders, Cookie: 'stride_access=valid-alice' },
       }),
       { params: Promise.resolve({ id: 'test-file' }) },
     );
@@ -722,7 +957,10 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
         await api.files.DELETE(
           new Request(upload.url, {
             method: 'DELETE',
-            headers: { Cookie: 'stride_access=valid-alice' },
+            headers: {
+              ...generationHeaders,
+              Cookie: 'stride_access=valid-alice',
+            },
           }),
           { params: Promise.resolve({ id: 'test-file' }) },
         )
@@ -735,6 +973,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
           new Request(upload.url, {
             method: 'DELETE',
             headers: {
+              ...generationHeaders,
               Origin: 'https://stride.test',
               Cookie: 'stride_access=valid-alice',
             },
@@ -750,6 +989,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
           new Request(upload.url, {
             method: 'DELETE',
             headers: {
+              ...generationHeaders,
               Origin: 'https://stride.test',
               Cookie: 'stride_access=valid-alice',
               'X-Stride-Owner': 'alice',
@@ -780,6 +1020,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       new Request(upload.url, {
         method: 'DELETE',
         headers: {
+          ...generationHeaders,
           Origin: 'https://stride.test',
           Cookie: 'stride_access=valid-alice',
           'X-Stride-Owner': 'alice',
@@ -846,6 +1087,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
         new Request('https://stride.test/api/files/race-file', {
           method: 'DELETE',
           headers: {
+            ...generationHeaders,
             Origin: 'https://stride.test',
             Cookie: 'stride_access=valid-alice',
             'X-Stride-Owner': 'alice',
@@ -956,7 +1198,8 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       (
         await api.sync.POST(
           make({
-            version: 3,
+            version: 4,
+            generation: RESET_GENERATION,
             owner: 'alice',
             cursor: 0,
             changes: expanded.outbox,
@@ -974,6 +1217,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       new Request('https://stride.test/api/alarms', {
         method: 'POST',
         headers: {
+          ...generationHeaders,
           Origin: 'https://stride.test',
           Cookie: 'stride_access=valid-alice',
           'Content-Type': 'application/json',
@@ -1011,6 +1255,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       {
         method: 'PUT',
         headers: {
+          ...generationHeaders,
           Origin: 'https://stride.test',
           Cookie: 'stride_access=valid-alice',
           'X-Stride-Owner': 'alice',
@@ -1040,6 +1285,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
     await saveFile('repair-file', new Blob([payload]), 'alice', 'repair.bin');
     const repair = (await getLocalFile('repair-file', 'alice'))!;
     const repairHeaders = {
+      ...generationHeaders,
       Origin: 'https://stride.test',
       Cookie: 'stride_access=valid-alice',
       'X-Stride-Owner': 'alice',
@@ -1094,6 +1340,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       {
         method: 'POST',
         headers: {
+          ...generationHeaders,
           Origin: 'https://stride.test',
           Cookie: 'stride_access=valid-alice',
           'X-Stride-Owner': 'bob',
@@ -1119,6 +1366,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       new Request('https://stride.test/api/watch/pair', {
         method: 'POST',
         headers: {
+          ...generationHeaders,
           Origin: 'https://stride.test',
           Cookie: 'stride_access=valid-alice',
           'Content-Type': 'application/json',
@@ -1133,7 +1381,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       api.watchPair.POST(
         new Request('https://stride.test/api/watch/pair', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { ...generationHeaders, 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'redeem', code: pairingData.code }),
         }),
       );
@@ -1155,6 +1403,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
       new Request('https://stride.test/api/watch', {
         method,
         headers: {
+          ...generationHeaders,
           Authorization: `Bearer ${token}`,
           ...(value ? { 'Content-Type': 'application/json' } : {}),
         },
@@ -1166,6 +1415,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
           new Request('https://stride.test/api/watch/pair', {
             method: 'POST',
             headers: {
+              ...generationHeaders,
               Origin: 'https://evil.test',
               Cookie: 'stride_access=valid-alice',
               'Content-Type': 'application/json',
@@ -1182,6 +1432,7 @@ void test('real D1 sync and dispatch enforce ownership, idempotence, durable sch
           new Request('https://stride.test/api/watch/pair', {
             method: 'POST',
             headers: {
+              ...generationHeaders,
               Origin: 'https://stride.test',
               'Content-Type': 'application/json',
             },

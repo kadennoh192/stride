@@ -16,7 +16,7 @@ Set runtime values through Sites environment configuration, never in `.openai/ho
 | `VAPID_SUBJECT`            | VAPID contact URI                                                           |
 | `REMINDER_DISPATCH_SECRET` | High-entropy secret shared only with the scheduled Worker                   |
 
-D1 binding `DB` and R2 binding `FILES` are declared in the existing Sites hosting manifest. Apply the additive migrations in `drizzle/` in order. The original migrations are preserved. Do not clear cloud tables during rollout.
+D1 binding `DB` and R2 binding `FILES` are declared in the existing Sites hosting manifest. Apply the additive migrations in `drizzle/` in order. The original migrations are preserved. Migration 0003 is additive; the authorized one-time initializer performs owner-scoped deletion only after authenticated startup. Do not manually clear global tables.
 
 For local configuration, copy `.dev.vars.example` to `.dev.vars`, fill values locally, and keep it untracked. Guest operation needs no account or push credentials.
 
@@ -58,7 +58,7 @@ Enable notifications from Settings on each device. Task reminders, assignment re
 
 ## Release metadata and client updates
 
-Add a dated, user-facing entry to `releases.json` and bump `package.json` before building. `npm run release:validate` rejects missing or malformed metadata. `npm run build` generates the source build identifier, the client asset build, `/version.json`, and its no-cache header. Preserve the preceding publication and cloud backup until the new build has passed installed-PWA update acceptance. If activation fails, keep serving the previous build; do not force a waiting worker past an unsaved local or cross-tab draft.
+Add a dated, user-facing entry to `releases.json` and bump `package.json` before building. `npm run release:validate` rejects missing or malformed metadata. `npm run build` generates the source build identifier, the client asset build, `/version.json`, and its no-cache header. Do not create or retain a pre-reset workspace backup as part of this rollout. The one-time purge is intentionally irreversible. A pre-reset application build must not be restored against protocol-four workspace data; do not force a waiting worker past an unsaved local or cross-tab draft.
 
 ## Apple Watch
 
@@ -70,4 +70,12 @@ The browser-based Watch Link at `/watch` is a separate online-only convenience s
 
 ## Rollout gate
 
-Before widening access: verify a cloud backup, run all automated checks, apply only additive migrations, validate the private publication, and complete the real-device checklist in `release.md`. Record the exact validated source/build. Preserve the prior working publication and cloud backup for rollback. A private publication is a development preview, not evidence of production readiness.
+Before widening access: run all automated checks, apply the additive migrations, validate the owner-private publication, and complete the real-device checklist in `release.md`. Record the exact validated source/build. The reset does not have a data rollback. A private publication is a development preview, not evidence of production readiness.
+
+## Release 0.4.0 reset and verification
+
+Deploy the exact validated build and all four historical SQL migrations to the existing Stride Site. Keep its owner-private audience, account configuration, and reminder infrastructure secrets. Open the updated app as the already signed-in owner. Local schema 9 purges old stores before rendering; the signed-in app calls `POST /api/workspace/reset` with same-origin authentication and the fixed generation header. An interrupted request leaves progress and can be retried by reopening or syncing. No setup/settings marker substitutes for verified cloud completion.
+
+Verify the owner's `workspace_resets` phase is `complete` with the fixed generation and completion timestamp. Before creating new data, inspect owner counts for fields, changes, dedup, reminder jobs/deliveries/queue, push subscriptions and Watch credentials, and verify both R2 prefixes are empty through initializer verification. Repeat startup and initialization after creating new data to confirm it survives. Verify auth still resolves the same account. Never use a different test account or environment as evidence that the intended workspace was purged.
+
+Other devices clear local data on their first updated launch. Require native Watch re-pairing. Downloaded backup files and unavailable devices remain outside remote erasure. If the browser has no owner session, cloud reset must wait for owner sign-in; deployment alone is not reset verification.

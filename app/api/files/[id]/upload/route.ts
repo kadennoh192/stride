@@ -1,3 +1,4 @@
+import { resetBoundary } from '@/lib/server/reset';
 import { authorize } from '@/lib/server/auth';
 import { sameOrigin } from '@/lib/server/bindings';
 import {
@@ -28,6 +29,8 @@ async function verified(request: Request, context: RouteContext) {
       { error: 'Sign in required' },
       { status: 401, headers: noStore },
     );
+  const boundary = await resetBoundary(request, user.id);
+  if (boundary) return boundary;
   if (request.headers.get('X-Stride-Owner') !== user.id)
     return Response.json(
       {

@@ -1,4 +1,5 @@
 'use client';
+import { hasUnsavedNoteDrafts } from './note-drafts';
 import {
   createContext,
   useCallback,
@@ -31,6 +32,8 @@ export function useUpdates() {
 }
 function hasDraft() {
   return (
+    hasUnsavedNoteDrafts() ||
+    !!document.querySelector('[data-stride-note-dirty="true"]') ||
     !!document.querySelector('.stride-modal form[data-stride-dirty="true"]') ||
     !!(
       document.activeElement instanceof HTMLElement &&
